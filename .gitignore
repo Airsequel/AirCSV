@@ -1,0 +1,20 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+
+# Xcode derived data / build artifacts
+DerivedData/
+build/
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# macOS
+.DS_Store
+
+# CocoaPods (not used, but just in case)
+Pods/
