@@ -58,6 +58,18 @@ class CSVViewModel: ObservableObject {
     }
   }
 
+  //MARK: - Layout
+
+  func idealWidth(for header: CSVHeader) -> CGFloat {
+    let headerLength = header.name.count
+    let maxCellLength =
+      rows.compactMap { row in
+        row.cells.count > header.columnIndex ? row.cells[header.columnIndex].content.count : nil
+      }.max() ?? 0
+    let maxLength = max(headerLength, maxCellLength)
+    return min(400, max(50, CGFloat(maxLength) * 8.5 + 24))
+  }
+
   //MARK: - Edit
 
   func delete(row: CSVRow, selection: Set<CSVRow.ID>) {

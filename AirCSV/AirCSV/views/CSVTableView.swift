@@ -15,8 +15,11 @@ struct CSVTableView: View {
         TableColumn(header.name) { row in
           TextField(
             "Cell",
-            text: viewModel.cellBinding(for: row, header: header))
+            text: viewModel.cellBinding(for: row, header: header)
+          )
+          .font(.system(.body, design: .monospaced))
         }
+        .width(min: 50, ideal: viewModel.idealWidth(for: header))
         .customizationID(header.id.uuidString)
       }
     } rows: {
