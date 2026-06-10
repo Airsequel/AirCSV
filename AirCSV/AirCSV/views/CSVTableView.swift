@@ -67,6 +67,7 @@ import SwiftUI
     @FocusState private var focusedCell: CellAddress?
     @State private var columnWidths: [UUID: CGFloat] = [:]
     @State private var dragStartWidths: [UUID: CGFloat] = [:]
+    @State private var keyMonitor: Any?
 
     func columnWidth(for header: CSVHeader) -> CGFloat {
       columnWidths[header.id] ?? viewModel.idealWidth(for: header)
@@ -233,7 +234,25 @@ import SwiftUI
           )
         }
       }
-      .onAppear { sizeAllColumnsToFit() }
+      .onAppear {
+        sizeAllColumnsToFit()
+        // Shift+Return inserts a line break while editing a cell; a plain
+        // Return still submits via onSubmit.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+          let returnKey: UInt16 = 36
+          guard editingCell != nil,
+            event.keyCode == returnKey,
+            event.modifierFlags.contains(.shift),
+            let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+          else { return event }
+          editor.insertNewlineIgnoringFieldEditor(nil)
+          return nil
+        }
+      }
+      .onDisappear {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+      }
       .onChange(of: viewModel.headers) { sizeAllColumnsToFit() }
       .onChange(of: focusedCell) { oldValue, newValue in
         // Only end editing when the *editing* cell lost focus. Comparing
