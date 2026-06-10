@@ -1,27 +1,30 @@
-
 .PHONY: help
 help: makefile
 	@tail -n +4 makefile | grep ".PHONY"
 
 
-PROJECT   = AirCSV/AirCSV.xcodeproj
-SCHEME    = AirCSV
-BUILD_DIR = .build
-APP       = $(BUILD_DIR)/Build/Products/Release/AirCSV.app
+PROJECT     = AirCSV/AirCSV.xcodeproj
+SCHEME      = AirCSV
+BUILD_DIR   = .build
+APP         = $(BUILD_DIR)/Build/Products/Release/AirCSV.app
+USE_NATIVE_TABLE ?=
+SWIFT_ACTIVE_COMPILATION_CONDITIONS ?= $(if $(USE_NATIVE_TABLE),USE_NATIVE_TABLE,)
 
 
-.PHONY: build
+.PHONY: build  # Pass USE_NATIVE_TABLE=1 to use native SwiftUI Table
 build:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) \
 		-configuration Release -derivedDataPath $(BUILD_DIR) \
-		CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+		CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+		SWIFT_ACTIVE_COMPILATION_CONDITIONS="$(SWIFT_ACTIVE_COMPILATION_CONDITIONS)"
 
 
 .PHONY: test
 test:
 	xcodebuild test -project $(PROJECT) -scheme $(SCHEME) \
 		-destination 'platform=macOS' -derivedDataPath $(BUILD_DIR) \
-		CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+		CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+		SWIFT_ACTIVE_COMPILATION_CONDITIONS="$(SWIFT_ACTIVE_COMPILATION_CONDITIONS)"
 
 
 .PHONY: format

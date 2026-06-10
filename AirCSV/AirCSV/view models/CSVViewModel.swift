@@ -82,13 +82,14 @@ class CSVViewModel: ObservableObject {
 
   func cellBinding(for row: CSVRow, header: CSVHeader) -> Binding<String> {
     Binding {
-      if row.cells.count > header.columnIndex {
-        return row.cells[header.columnIndex].content
-      } else {
-        return ""
+      if let r = self.rows.first(where: { $0.id == row.id }),
+        r.cells.count > header.columnIndex
+      {
+        return r.cells[header.columnIndex].content
       }
+      return ""
     } set: { newValue in
-      if let rowIndex = self.rows.firstIndex(of: row) {
+      if let rowIndex = self.rows.firstIndex(where: { $0.id == row.id }) {
         self.rows[rowIndex].cells[header.columnIndex].content = newValue
       }
     }
