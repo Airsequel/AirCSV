@@ -15,7 +15,7 @@ struct ContentView: View {
         } label: {
           Label(
             wrapContent ? "Clip Content" : "Wrap Content",
-            systemImage: wrapContent ? "scissors" : "arrow.turn.down.left"
+            systemImage: wrapContent ? "arrow.right.to.line" : "arrow.turn.down.left"
           )
         }
       }
