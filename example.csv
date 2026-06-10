@@ -3,9 +3,24 @@ Alice Johnson,34,Berlin,Software Engineer,72000,2019-03-15,Remote on Fridays
 Bob Smith,45,Hamburg,"Product Manager, Senior",85000,2015-07-01,
 Carla Méndez,28,Munich,Data Analyst,58000,2021-11-08,"Speaks Spanish, German, and English"
 David Lee,52,Frankfurt,CFO,140000,2010-01-20,"Said ""numbers don't lie"""
-Emma Wilson,31,Cologne,UX Designer,61000,2020-06-12,Part-time (80%)
-Felix Bauer,39,Stuttgart,DevOps Engineer,78000,2018-09-03,
+Emma Wilson,31,Cologne,UX Designer,61000,2020-06-12,"Part-time (80%)
+Wants to go full-time in 2027"
+Felix Bauer,39,Stuttgart,DevOps Engineer,78000,2018-09-03,"Line one
+Line two
+Line three with a trailing comma,
+Line four with ""quotes"" and a comma, too"
 Grace Kim,26,Berlin,Junior Developer,48000,2023-02-27,Mentored by Alice
-Henrik Larsen,41,Düsseldorf,Sales Director,95000,2014-04-18,Frequent traveler
+Henrik Larsen,41,Düsseldorf,Sales Director,95000,2014-04-18,Frequent traveler ✈️ 🌍
 Isabella Rossi,36,Leipzig,Marketing Lead,67000,2017-10-30,
 Jamal Carter,29,Dresden,QA Engineer,54000,2022-08-22,Owns the test suite
+山田太郎,33,Berlin,Backend Engineer,71000,2019-12-02,日本語のメモ：改行なし
+أمينة خالد,30,Munich,Researcher,63000,2021-05-17,Right-to-left text mixed with English
+Søren Müller-Lüdenscheidt von und zu Hohenzollern-Sigmaringen,48,Bad Wörishofen im Unterallgäu,Chief Officer of Extraordinarily Long Job Titles and Other Verbose Matters,99999,2012-02-29,"This single cell is intentionally very long to stress column sizing: Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
+,,,,,,
+"  Whitespace  Wally  ",27,"  Berlin  ",Intern,0,2024-01-01,"  leading and trailing spaces  "
+=SUM(A1:A9),99,=cmd,"=HYPERLINK(""http://example.com"")",-1,0000-00-00,Formula-injection lookalikes; must stay plain text
+"Quote""Start",38,Hamburg,"""Fully quoted occupation""",80000,2016-08-08,"Ends with a quote"""
+Ünïcödé Çhärs,35,Köln,Ingénieur,75000,2018-03-03,Ümläüts öpërätë çörrëçtly
+Tab	Inside,40,Bremen,Separator Saboteur,50000,2020-10-10,"A cell with a	tab and a comma, plus
+a newline for good measure"
+Last Row,99,Zürich,The End,1,2026-06-10,Final row sanity check
