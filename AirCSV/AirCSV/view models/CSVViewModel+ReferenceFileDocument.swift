@@ -22,7 +22,7 @@ extension CSVViewModel {
 
     let headerRow = headers.map { $0.name }.joined(separator: ",")
     let dataRows = rows.map { exportContent(for: $0) }
-    return ([headerRow] + dataRows).joined(separator: "\n")
+    return ([headerRow] + dataRows).joined(separator: "\n") + "\n"
   }
 
   /// The row serialized as a single CSV line.

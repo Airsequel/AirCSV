@@ -75,6 +75,13 @@ final class AirCSVTests: XCTestCase {
     }
 
     @MainActor
+    func testExportContentEndsWithNewline() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2")
+        XCTAssertEqual(vm.exportContent(), "A,B\n1,2\n")
+    }
+
+    @MainActor
     func testExportContentForRow() {
         let vm = CSVViewModel()
         vm.parseCSV(content: "A,B\nhello,\"with, comma\"")
