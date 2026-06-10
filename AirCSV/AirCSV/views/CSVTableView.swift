@@ -131,6 +131,66 @@ import SwiftUI
       selectedColumns = []
     }
 
+    /// Copy the selected cell, rows, or columns to the pasteboard. Returns
+    /// false when nothing is selected.
+    func copySelection() -> Bool {
+      let content: String
+      if let cell = selectedCell {
+        guard let row = viewModel.rows.first(where: { $0.id == cell.rowID }),
+          let header = viewModel.headers.first(where: { $0.id == cell.headerID })
+        else { return false }
+        content = viewModel.cellBinding(for: row, header: header).wrappedValue
+      } else if !selectedRows.isEmpty {
+        content = viewModel.copyContent(rows: selectedRows)
+      } else if !selectedColumns.isEmpty {
+        content = viewModel.copyContent(columns: selectedColumns)
+      } else {
+        return false
+      }
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(content, forType: .string)
+      return true
+    }
+
+    /// Copy the selection, then clear its cells.
+    func cutSelection() -> Bool {
+      guard copySelection() else { return false }
+      if let cell = selectedCell {
+        if let row = viewModel.rows.first(where: { $0.id == cell.rowID }),
+          let header = viewModel.headers.first(where: { $0.id == cell.headerID })
+        {
+          viewModel.cellBinding(for: row, header: header).wrappedValue = ""
+        }
+      } else if !selectedRows.isEmpty {
+        viewModel.clear(rows: selectedRows)
+      } else if !selectedColumns.isEmpty {
+        viewModel.clear(columns: selectedColumns)
+      }
+      return true
+    }
+
+    /// Paste the pasteboard starting at the selected cell, the first
+    /// selected row, or the first selected column. Returns false when
+    /// nothing is selected or the pasteboard has no text.
+    func pasteSelection() -> Bool {
+      guard let text = NSPasteboard.general.string(forType: .string) else { return false }
+      if let cell = selectedCell {
+        guard let rowIndex = viewModel.rows.firstIndex(where: { $0.id == cell.rowID }),
+          let columnIndex = viewModel.headers.firstIndex(where: { $0.id == cell.headerID })
+        else { return false }
+        viewModel.paste(text, atRow: rowIndex, column: columnIndex)
+      } else if let rowIndex = viewModel.rows.firstIndex(where: { selectedRows.contains($0.id) }) {
+        viewModel.paste(text, atRow: rowIndex, column: 0)
+      } else if let columnIndex = viewModel.headers.firstIndex(where: {
+        selectedColumns.contains($0.id)
+      }) {
+        viewModel.paste(text, atRow: 0, column: columnIndex)
+      } else {
+        return false
+      }
+      return true
+    }
+
     /// The cell content as an openable web URL, or nil if it isn't one.
     func cellURL(_ content: String) -> URL? {
       let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -493,6 +553,21 @@ import SwiftUI
               return nil
             }
             return event
+          }
+          // Cmd+C/X/V act on the selected cell, rows, or columns. While
+          // editing, the field editor handles them (returned above).
+          if editingHeader == nil,
+            event.modifierFlags.contains(.command),
+            !event.modifierFlags.contains(.option),
+            !event.modifierFlags.contains(.control),
+            let key = event.charactersIgnoringModifiers
+          {
+            switch key {
+            case "c": if copySelection() { return nil }
+            case "x": if cutSelection() { return nil }
+            case "v": if pasteSelection() { return nil }
+            default: break
+            }
           }
           if let cell = selectedCell, editingHeader == nil {
             switch event.keyCode {

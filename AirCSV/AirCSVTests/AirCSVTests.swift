@@ -137,6 +137,76 @@ final class AirCSVTests: XCTestCase {
     }
 
     @MainActor
+    func testCopyContentForRows() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2\n3,4\n5,6")
+        let ids = Set([vm.rows[0].id, vm.rows[2].id])
+        XCTAssertEqual(vm.copyContent(rows: ids), "1,2\n5,6")
+    }
+
+    @MainActor
+    func testCopyContentForColumns() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B,C\n1,2,3\n4,5,6")
+        let ids = Set([vm.headers[0].id, vm.headers[2].id])
+        XCTAssertEqual(vm.copyContent(columns: ids), "1,3\n4,6")
+    }
+
+    @MainActor
+    func testClearColumns() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B,C\n1,2,3\n4,5,6")
+        vm.clear(columns: Set([vm.headers[0].id, vm.headers[2].id]))
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["", "2", ""])
+        XCTAssertEqual(vm.rows[1].cells.map(\.content), ["", "5", ""])
+    }
+
+    @MainActor
+    func testPasteSingleField() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2\n3,4")
+        vm.paste("hello", atRow: 1, column: 1)
+        XCTAssertEqual(vm.rows[1].cells.map(\.content), ["3", "hello"])
+    }
+
+    @MainActor
+    func testPasteCSVBlock() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2\n3,4")
+        vm.paste("x,y\nz,\"with, comma\"\n", atRow: 0, column: 0)
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["x", "y"])
+        XCTAssertEqual(vm.rows[1].cells.map(\.content), ["z", "with, comma"])
+    }
+
+    @MainActor
+    func testPasteTabSeparated() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2")
+        vm.paste("x\ty", atRow: 0, column: 0)
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["x", "y"])
+    }
+
+    @MainActor
+    func testPasteExpandsTable() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2")
+        vm.paste("x,y\nz,w", atRow: 1, column: 1)
+        XCTAssertEqual(vm.headers.count, 3)
+        XCTAssertEqual(vm.rows.count, 3)
+        XCTAssertEqual(vm.rows[1].cells.map(\.content), ["", "x", "y"])
+        XCTAssertEqual(vm.rows[2].cells.map(\.content), ["", "z", "w"])
+    }
+
+    @MainActor
+    func testPasteIntoColumn() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2\n3,4")
+        vm.paste("x\ny", atRow: 0, column: 1)
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["1", "x"])
+        XCTAssertEqual(vm.rows[1].cells.map(\.content), ["3", "y"])
+    }
+
+    @MainActor
     func testDeleteRowWithSelection() {
         let vm = CSVViewModel()
         vm.parseCSV(content: "A,B\n1,2\n3,4\n5,6")

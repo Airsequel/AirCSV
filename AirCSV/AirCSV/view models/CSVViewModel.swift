@@ -110,11 +110,20 @@ class CSVViewModel: ObservableObject {
   }
 
   func clear(row: CSVRow, selection: Set<CSVRow.ID>) {
-    let targets = selection.contains(row.id) ? selection : [row.id]
-    for index in rows.indices where targets.contains(rows[index].id) {
+    clear(rows: selection.contains(row.id) ? selection : [row.id])
+  }
+
+  func clear(rows selection: Set<CSVRow.ID>) {
+    for index in rows.indices where selection.contains(rows[index].id) {
       for cellIndex in rows[index].cells.indices {
         rows[index].cells[cellIndex].content = ""
       }
+    }
+  }
+
+  func clear(columns selection: Set<CSVHeader.ID>) {
+    for header in headers where selection.contains(header.id) {
+      clear(column: header)
     }
   }
 
@@ -172,6 +181,58 @@ class CSVViewModel: ObservableObject {
         self.rows[rowIndex].cells[header.columnIndex].content = newValue
       }
     }
+  }
+
+  //MARK: - Clipboard
+
+  /// The selected rows serialized as CSV lines, in table order.
+  func copyContent(rows selection: Set<CSVRow.ID>) -> String {
+    rows.filter { selection.contains($0.id) }
+      .map { exportContent(for: $0) }
+      .joined(separator: "\n")
+  }
+
+  /// The selected columns serialized as CSV lines, one per row, in table
+  /// order.
+  func copyContent(columns selection: Set<CSVHeader.ID>) -> String {
+    let selectedHeaders = headers.filter { selection.contains($0.id) }
+    return rows.map { row in
+      selectedHeaders.map { header in
+        row.cells.indices.contains(header.columnIndex)
+          ? row.cells[header.columnIndex].exportContent
+          : ""
+      }.joined(separator: ",")
+    }.joined(separator: "\n")
+  }
+
+  /// Paste delimited text with its top-left field at the given position,
+  /// adding rows and columns as needed.
+  func paste(_ text: String, atRow startRow: Int, column startColumn: Int) {
+    for (rowOffset, fields) in parseFields(text).enumerated() {
+      let rowIndex = startRow + rowOffset
+      while rows.count <= rowIndex { addRow() }
+      for (columnOffset, field) in fields.enumerated() {
+        let columnIndex = startColumn + columnOffset
+        while headers.count <= columnIndex { addColumn() }
+        while rows[rowIndex].cells.count <= columnIndex {
+          rows[rowIndex].cells.append(CSVCell(content: ""))
+        }
+        rows[rowIndex].cells[columnIndex].content = field
+      }
+    }
+  }
+
+  /// Parse pasted text into a grid of fields, guessing the delimiter
+  /// (comma, tab, or semicolon). Falls back to one field per line when the
+  /// text isn't parseable.
+  private func parseFields(_ text: String) -> [[String]] {
+    var trimmed = text
+    while let last = trimmed.last, last.isNewline { trimmed.removeLast() }
+    guard !trimmed.isEmpty else { return [] }
+    if let csv = try? EnumeratedCSV(string: trimmed, loadColumns: false) {
+      return [csv.header] + csv.rows
+    }
+    return trimmed.components(separatedBy: .newlines).map { [$0] }
   }
 
   //MARK: - Preview
