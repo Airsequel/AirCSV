@@ -237,9 +237,7 @@ import SwiftUI
                 .contentShape(Rectangle())
                 .contextMenu {
                   Button("Delete") {
-                    withAnimation(.bouncy(duration: 2)) {
-                      viewModel.delete(row: row, selection: selectedRows)
-                    }
+                    viewModel.delete(row: row, selection: selectedRows)
                   }
                 }
               }
