@@ -123,6 +123,16 @@ class CSVViewModel: ObservableObject {
     }
   }
 
+  func headerBinding(for header: CSVHeader) -> Binding<String> {
+    Binding {
+      self.headers.first(where: { $0.id == header.id })?.name ?? ""
+    } set: { newValue in
+      if let index = self.headers.firstIndex(where: { $0.id == header.id }) {
+        self.headers[index].name = newValue
+      }
+    }
+  }
+
   func cellBinding(for row: CSVRow, header: CSVHeader) -> Binding<String> {
     Binding {
       if let r = self.rows.first(where: { $0.id == row.id }),

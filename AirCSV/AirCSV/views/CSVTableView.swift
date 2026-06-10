@@ -70,6 +70,8 @@ import SwiftUI
     @State private var keyMonitor: Any?
     @State private var hoveringAddRow = false
     @State private var hoveringAddColumn = false
+    @State private var editingHeader: CSVHeader.ID?
+    @FocusState private var focusedHeader: CSVHeader.ID?
 
     func columnWidth(for header: CSVHeader) -> CGFloat {
       columnWidths[header.id] ?? viewModel.idealWidth(for: header)
@@ -233,12 +235,38 @@ import SwiftUI
                   .background(Color(nsColor: .windowBackgroundColor))
                   .overlay(alignment: .trailing) { Divider() }
                 ForEach(viewModel.headers) { header in
-                  Text(header.name)
-                    .fontWeight(.semibold)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .frame(width: columnWidth(for: header), alignment: .leading)
-                    .overlay(alignment: .trailing) {
+                  Group {
+                    if editingHeader == header.id {
+                      TextField("", text: viewModel.headerBinding(for: header))
+                        .textFieldStyle(.plain)
+                        .focused($focusedHeader, equals: header.id)
+                        .onSubmit { editingHeader = nil }
+                        .onExitCommand { editingHeader = nil }
+                    } else {
+                      Text(header.name)
+                    }
+                  }
+                  .fontWeight(.semibold)
+                  .padding(.horizontal, 8)
+                  .padding(.vertical, 6)
+                  .frame(width: columnWidth(for: header), alignment: .leading)
+                  .contentShape(Rectangle())
+                  // Plain gesture (not simultaneous) so the resize handle's
+                  // own double-click keeps priority within its strip.
+                  .gesture(
+                    TapGesture().onEnded {
+                      guard editingHeader != header.id else { return }
+                      if let event = NSApp.currentEvent, event.clickCount >= 2 {
+                        editingHeader = header.id
+                        let clickLocation = event.locationInWindow
+                        DispatchQueue.main.async {
+                          focusedHeader = header.id
+                          DispatchQueue.main.async { placeCursor(at: clickLocation) }
+                        }
+                      }
+                    }
+                  )
+                  .overlay(alignment: .trailing) {
                       ResizeHandle()
                         .onTapGesture(count: 2) {
                           columnWidths[header.id] = viewModel.fitWidth(for: header)
@@ -322,6 +350,11 @@ import SwiftUI
         // when the previous cell's defocus event arrives late.
         if editingCell != nil && oldValue == editingCell && newValue != editingCell {
           editingCell = nil
+        }
+      }
+      .onChange(of: focusedHeader) { oldValue, newValue in
+        if editingHeader != nil && oldValue == editingHeader && newValue != editingHeader {
+          editingHeader = nil
         }
       }
     }
