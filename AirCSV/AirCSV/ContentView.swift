@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
 
   @ObservedObject var viewModel: CSVViewModel
-  @State private var wrapContent: Bool = false
+  @State private var wrapContent: Bool = true
 
   var body: some View {
     CSVTableView(viewModel: viewModel, wrapContent: $wrapContent)
