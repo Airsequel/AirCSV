@@ -21,10 +21,22 @@ extension CSVViewModel {
     let rows = filteredRows(for: headers)
 
     let headerRow = headers.map { $0.name }.joined(separator: ",")
-    let dataRows = rows.map { row in
-      row.cells.map { $0.exportContent }.joined(separator: ",")
-    }
+    let dataRows = rows.map { exportContent(for: $0) }
     return ([headerRow] + dataRows).joined(separator: "\n")
+  }
+
+  /// The row serialized as a single CSV line.
+  func exportContent(for row: CSVRow) -> String {
+    row.cells.map { $0.exportContent }.joined(separator: ",")
+  }
+
+  /// The column's cells serialized as one CSV value per line.
+  func exportContent(for header: CSVHeader) -> String {
+    rows.compactMap { row in
+      row.cells.indices.contains(header.columnIndex)
+        ? row.cells[header.columnIndex].exportContent
+        : nil
+    }.joined(separator: "\n")
   }
 
   func filteredHeaders() -> [CSVHeader] {

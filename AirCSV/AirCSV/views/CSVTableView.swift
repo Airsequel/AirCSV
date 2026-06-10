@@ -62,6 +62,7 @@ import SwiftUI
     @ObservedObject var viewModel: CSVViewModel
     @Binding var wrapContent: Bool
     @State private var selectedRows: Set<CSVRow.ID> = []
+    @State private var selectedColumns: Set<CSVHeader.ID> = []
     @State private var selectedCell: CellAddress?
     @State private var editingCell: CellAddress?
     @FocusState private var focusedCell: CellAddress?
@@ -127,6 +128,18 @@ import SwiftUI
         headerID: viewModel.headers[targetColumn].id
       )
       selectedRows = []
+      selectedColumns = []
+    }
+
+    /// The cell content as an openable web URL, or nil if it isn't one.
+    func cellURL(_ content: String) -> URL? {
+      let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard let url = URL(string: trimmed),
+        let scheme = url.scheme?.lowercased(),
+        scheme == "http" || scheme == "https",
+        url.host() != nil
+      else { return nil }
+      return url
     }
 
     /// Replace the field editor's begin-editing select-all with a collapsed
@@ -162,10 +175,33 @@ import SwiftUI
                     .contentShape(Rectangle())
                     .onTapGesture {
                       selectedRows = [row.id]
+                      selectedColumns = []
                       selectedCell = nil
                       editingCell = nil
                       focusedCell = nil
                     }
+                    .overlay(
+                      RightClickMenu {
+                        selectedRows = [row.id]
+                        selectedColumns = []
+                        selectedCell = nil
+                        editingCell = nil
+                        focusedCell = nil
+                        return [
+                          MenuAction(title: "Copy Row") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(
+                              viewModel.exportContent(for: row), forType: .string)
+                          },
+                          MenuAction(title: "Clear Row") {
+                            viewModel.clear(row: row, selection: [row.id])
+                          },
+                          MenuAction(title: "Delete Row") {
+                            viewModel.delete(row: row, selection: [row.id])
+                          },
+                        ]
+                      }
+                    )
                   ForEach(viewModel.headers) { header in
                     let address = CellAddress(rowID: row.id, headerID: header.id)
                     Group {
@@ -190,7 +226,11 @@ import SwiftUI
                     .frame(width: columnWidth(for: header), alignment: .leading)
                     .frame(maxHeight: .infinity)
                     .background(
-                      selectedCell == address ? Color.accentColor.opacity(0.25) : Color.clear
+                      selectedCell == address
+                        ? Color.accentColor.opacity(0.25)
+                        : selectedColumns.contains(header.id)
+                          ? Color.accentColor.opacity(0.15)
+                          : Color.clear
                     )
                     .overlay(alignment: .trailing) { Divider() }
                     .contentShape(Rectangle())
@@ -198,6 +238,7 @@ import SwiftUI
                       TapGesture().onEnded {
                         selectedCell = address
                         selectedRows = []
+                        selectedColumns = []
                         // Clicks inside the cell's own active editor (cursor
                         // placement, word selection) are the editor's business.
                         guard editingCell != address else { return }
@@ -222,6 +263,37 @@ import SwiftUI
                         }
                       }
                     )
+                    .overlay {
+                      // No catcher while editing, so the field editor keeps
+                      // its own clicks and text context menu.
+                      if editingCell != address {
+                        RightClickMenu {
+                          selectedCell = address
+                          selectedRows = []
+                          selectedColumns = []
+                          editingCell = nil
+                          focusedCell = nil
+                          let content =
+                            viewModel.cellBinding(for: row, header: header).wrappedValue
+                          var actions = [
+                            MenuAction(title: "Copy Cell") {
+                              NSPasteboard.general.clearContents()
+                              NSPasteboard.general.setString(content, forType: .string)
+                            },
+                            MenuAction(title: "Clear Cell") {
+                              viewModel.cellBinding(for: row, header: header).wrappedValue = ""
+                            },
+                          ]
+                          if let url = cellURL(content) {
+                            actions.append(
+                              MenuAction(title: "Open URL") {
+                                NSWorkspace.shared.open(url)
+                              })
+                          }
+                          return actions
+                        }
+                      }
+                    }
                   }
                 }
                 // Size the row to its tallest cell, then let every cell fill
@@ -235,11 +307,6 @@ import SwiftUI
                 )
                 .overlay(alignment: .bottom) { Divider() }
                 .contentShape(Rectangle())
-                .contextMenu {
-                  Button("Delete") {
-                    viewModel.delete(row: row, selection: selectedRows)
-                  }
-                }
               }
               Button {
                 viewModel.addRow()
@@ -289,6 +356,11 @@ import SwiftUI
                   .padding(.horizontal, 8)
                   .padding(.vertical, 6)
                   .frame(width: columnWidth(for: header), alignment: .leading)
+                  .background(
+                    selectedColumns.contains(header.id)
+                      ? Color.accentColor.opacity(0.15)
+                      : Color.clear
+                  )
                   .contentShape(Rectangle())
                   // Plain gesture (not simultaneous) so the resize handle's
                   // own double-click keeps priority within its strip.
@@ -302,9 +374,44 @@ import SwiftUI
                           focusedHeader = header.id
                           DispatchQueue.main.async { placeCursor(at: clickLocation) }
                         }
+                      } else {
+                        selectedColumns = [header.id]
+                        selectedRows = []
+                        selectedCell = nil
+                        editingCell = nil
+                        focusedCell = nil
                       }
                     }
                   )
+                  .overlay {
+                    // No catcher while renaming, so the field editor keeps
+                    // its own clicks and text context menu.
+                    if editingHeader != header.id {
+                      RightClickMenu {
+                        selectedColumns = [header.id]
+                        selectedRows = []
+                        selectedCell = nil
+                        editingCell = nil
+                        focusedCell = nil
+                        editingHeader = nil
+                        focusedHeader = nil
+                        return [
+                          MenuAction(title: "Copy Column") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(
+                              viewModel.exportContent(for: header), forType: .string)
+                          },
+                          MenuAction(title: "Clear Column") {
+                            viewModel.clear(column: header)
+                          },
+                          MenuAction(title: "Delete Column") {
+                            viewModel.delete(column: header)
+                            selectedColumns = []
+                          },
+                        ]
+                      }
+                    }
+                  }
                   .overlay(alignment: .trailing) {
                       ResizeHandle()
                         .onTapGesture(count: 2) {
@@ -423,6 +530,91 @@ import SwiftUI
         if editingHeader != nil && oldValue == editingHeader && newValue != editingHeader {
           editingHeader = nil
         }
+      }
+    }
+  }
+
+  /// A context menu entry shown by `RightClickMenu`.
+  private struct MenuAction {
+    let title: String
+    let action: () -> Void
+  }
+
+  /// Shows a context menu via AppKit instead of SwiftUI's `contextMenu`.
+  /// The callback runs on right mouse down (or Control-click) and updates
+  /// the selection; the menu only opens after SwiftUI has committed and
+  /// drawn that change, so the highlight is visible first.
+  private struct RightClickMenu: NSViewRepresentable {
+    /// Updates the selection and returns the menu items to show.
+    let onRightMouseDown: () -> [MenuAction]
+
+    func makeNSView(context: Context) -> CatcherView {
+      let view = CatcherView()
+      view.onRightMouseDown = onRightMouseDown
+      return view
+    }
+
+    func updateNSView(_ nsView: CatcherView, context: Context) {
+      nsView.onRightMouseDown = onRightMouseDown
+    }
+
+    final class CatcherView: NSView {
+      var onRightMouseDown: (() -> [MenuAction])?
+
+      /// Only intercept right clicks and Control-clicks; every other event
+      /// falls through to the SwiftUI content below.
+      override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = NSApp.currentEvent else { return nil }
+        let isRightClick = event.type == .rightMouseDown || event.type == .rightMouseUp
+        let isControlClick =
+          (event.type == .leftMouseDown || event.type == .leftMouseUp)
+          && event.modifierFlags.contains(.control)
+        return isRightClick || isControlClick ? super.hitTest(point) : nil
+      }
+
+      override func rightMouseDown(with event: NSEvent) {
+        showMenu(for: event)
+      }
+
+      override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) {
+          showMenu(for: event)
+        } else {
+          super.mouseDown(with: event)
+        }
+      }
+
+      private func showMenu(for event: NSEvent) {
+        guard let actions = onRightMouseDown?() else { return }
+        let menu = NSMenu()
+        for action in actions {
+          menu.addItem(ActionMenuItem(action))
+        }
+        // Two run loop hops so SwiftUI commits and Core Animation draws the
+        // updated selection before the menu's tracking session blocks them.
+        DispatchQueue.main.async {
+          DispatchQueue.main.async {
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+          }
+        }
+      }
+    }
+
+    final class ActionMenuItem: NSMenuItem {
+      private let handler: () -> Void
+
+      init(_ menuAction: MenuAction) {
+        self.handler = menuAction.action
+        super.init(title: menuAction.title, action: #selector(invoke), keyEquivalent: "")
+        self.target = self
+      }
+
+      required init(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+      }
+
+      @objc private func invoke() {
+        handler()
       }
     }
   }

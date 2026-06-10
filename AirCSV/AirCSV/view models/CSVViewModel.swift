@@ -109,6 +109,32 @@ class CSVViewModel: ObservableObject {
     }
   }
 
+  func clear(row: CSVRow, selection: Set<CSVRow.ID>) {
+    let targets = selection.contains(row.id) ? selection : [row.id]
+    for index in rows.indices where targets.contains(rows[index].id) {
+      for cellIndex in rows[index].cells.indices {
+        rows[index].cells[cellIndex].content = ""
+      }
+    }
+  }
+
+  func clear(column header: CSVHeader) {
+    for index in rows.indices where rows[index].cells.indices.contains(header.columnIndex) {
+      rows[index].cells[header.columnIndex].content = ""
+    }
+  }
+
+  func delete(column header: CSVHeader) {
+    guard let headerIndex = headers.firstIndex(where: { $0.id == header.id }) else { return }
+    headers.remove(at: headerIndex)
+    for index in rows.indices where rows[index].cells.indices.contains(header.columnIndex) {
+      rows[index].cells.remove(at: header.columnIndex)
+    }
+    for index in headers.indices {
+      headers[index].columnIndex = index
+    }
+  }
+
   func addRow() {
     rows.append(CSVRow(cells: headers.map { _ in CSVCell(content: "") }))
   }
