@@ -14,6 +14,14 @@ import SwiftUI
         selection: $selection,
         columnCustomization: $viewModel.tableCustomization
       ) {
+        TableColumn("#") { row in
+          Text("\(viewModel.rowNumber(for: row))")
+            .font(.system(.body, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .width(viewModel.rowNumberColumnWidth)
+
         TableColumnForEach(viewModel.headers) { header in
           TableColumn(header.name) { row in
             TextField("", text: viewModel.cellBinding(for: row, header: header), axis: .vertical)
@@ -69,6 +77,13 @@ import SwiftUI
             Section {
               ForEach(Array(viewModel.rows.enumerated()), id: \.element.id) { index, row in
                 HStack(spacing: 0) {
+                  Text("\(index + 1)")
+                    .foregroundStyle(.secondary)
+                    .font(.system(.body, design: .monospaced))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(width: viewModel.rowNumberColumnWidth, alignment: .trailing)
+                    .overlay(alignment: .trailing) { Divider() }
                   ForEach(viewModel.headers) { header in
                     Text(viewModel.cellBinding(for: row, header: header).wrappedValue)
                       .lineLimit(wrapContent ? nil : 1)
@@ -99,6 +114,12 @@ import SwiftUI
               }
             } header: {
               HStack(spacing: 0) {
+                Text("#")
+                  .fontWeight(.semibold)
+                  .padding(.horizontal, 8)
+                  .padding(.vertical, 6)
+                  .frame(width: viewModel.rowNumberColumnWidth, alignment: .trailing)
+                  .overlay(alignment: .trailing) { Divider() }
                 ForEach(viewModel.headers) { header in
                   Text(header.name)
                     .fontWeight(.semibold)
