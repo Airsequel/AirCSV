@@ -105,6 +105,7 @@ import SwiftUI
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
                     .frame(width: viewModel.rowNumberColumnWidth, alignment: .trailing)
+                    .background(Color(nsColor: .windowBackgroundColor))
                     .overlay(alignment: .trailing) { Divider() }
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -193,6 +194,7 @@ import SwiftUI
                   .padding(.horizontal, 8)
                   .padding(.vertical, 6)
                   .frame(width: viewModel.rowNumberColumnWidth, alignment: .trailing)
+                  .background(Color(nsColor: .windowBackgroundColor))
                   .overlay(alignment: .trailing) { Divider() }
                 ForEach(viewModel.headers) { header in
                   Text(header.name)
