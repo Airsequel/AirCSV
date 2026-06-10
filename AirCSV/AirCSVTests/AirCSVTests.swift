@@ -22,6 +22,16 @@ final class AirCSVTests: XCTestCase {
         XCTAssertEqual(cell.exportContent, "\"hello, world\"")
     }
 
+    func testCSVCellExportContentWithNewline() {
+        let cell = CSVCell(content: "hello\nworld")
+        XCTAssertEqual(cell.exportContent, "\"hello\nworld\"")
+    }
+
+    func testCSVCellExportContentWithQuote() {
+        let cell = CSVCell(content: "say \"hi\"")
+        XCTAssertEqual(cell.exportContent, "\"say \"\"hi\"\"\"")
+    }
+
     @MainActor
     func testParseCSV() {
         let vm = CSVViewModel()

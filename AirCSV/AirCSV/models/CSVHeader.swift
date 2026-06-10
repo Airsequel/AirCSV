@@ -29,8 +29,8 @@ struct CSVCell: Identifiable, Equatable {
   var content: String
 
   var exportContent: String {
-    if content.contains(",") {
-      return "\"\(content)\""
+    if content.contains(where: { $0 == "," || $0 == "\"" || $0.isNewline }) {
+      return "\"\(content.replacingOccurrences(of: "\"", with: "\"\""))\""
     } else {
       return content
     }
