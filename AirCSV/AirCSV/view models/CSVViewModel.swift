@@ -7,7 +7,6 @@ class CSVViewModel: ObservableObject {
   @Published var content: String = ""
   @Published var headers: [CSVHeader] = []
   @Published var rows: [CSVRow] = []
-  @Published var tableCustomization: TableColumnCustomization<CSVRow> = .init()
 
   init() {
 
@@ -63,10 +62,6 @@ class CSVViewModel: ObservableObject {
   var rowNumberColumnWidth: CGFloat {
     let digits = String(max(rows.count, 1)).count
     return max(40, CGFloat(digits) * 8.5 + 16)
-  }
-
-  func rowNumber(for row: CSVRow) -> Int {
-    (rows.firstIndex(where: { $0.id == row.id }) ?? 0) + 1
   }
 
   func idealWidth(for header: CSVHeader) -> CGFloat {

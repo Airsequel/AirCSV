@@ -17,9 +17,6 @@ extension CSVViewModel: ReferenceFileDocument {
 
 extension CSVViewModel {
   func exportContent() -> String {
-    let headers = filteredHeaders()
-    let rows = filteredRows(for: headers)
-
     let headerRow = headers.map { $0.name }.joined(separator: ",")
     let dataRows = rows.map { exportContent(for: $0) }
     return ([headerRow] + dataRows).joined(separator: "\n") + "\n"
@@ -37,32 +34,5 @@ extension CSVViewModel {
         ? row.cells[header.columnIndex].exportContent
         : nil
     }.joined(separator: "\n")
-  }
-
-  func filteredHeaders() -> [CSVHeader] {
-    var filteredHeaders: [CSVHeader] = []
-
-    for header in self.headers {
-      if tableCustomization[visibility: header.id.uuidString] != .hidden {
-        filteredHeaders.append(header)
-      }
-    }
-
-    return filteredHeaders
-  }
-
-  func filteredRows(for headers: [CSVHeader]) -> [CSVRow] {
-    var filteredRows: [CSVRow] = []
-
-    for row in self.rows {
-      var copy = CSVRow(cells: [CSVCell]())
-      for header in headers {
-        copy.cells.append(row.cells[header.columnIndex])
-      }
-
-      filteredRows.append(copy)
-    }
-
-    return filteredRows
   }
 }
