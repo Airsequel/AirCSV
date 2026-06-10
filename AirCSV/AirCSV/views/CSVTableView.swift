@@ -88,6 +88,47 @@ import SwiftUI
       }
     }
 
+    /// Move the edit session to the cell offset by the given deltas, or end
+    /// editing when that would leave the table.
+    func moveEditing(rowDelta: Int, columnDelta: Int) {
+      guard let current = editingCell,
+        let rowIndex = viewModel.rows.firstIndex(where: { $0.id == current.rowID }),
+        let columnIndex = viewModel.headers.firstIndex(where: { $0.id == current.headerID })
+      else { return }
+      let targetRow = rowIndex + rowDelta
+      let targetColumn = columnIndex + columnDelta
+      guard viewModel.rows.indices.contains(targetRow),
+        viewModel.headers.indices.contains(targetColumn)
+      else {
+        editingCell = nil
+        focusedCell = nil
+        return
+      }
+      let target = CellAddress(
+        rowID: viewModel.rows[targetRow].id,
+        headerID: viewModel.headers[targetColumn].id
+      )
+      editingCell = target
+      selectedCell = target
+      DispatchQueue.main.async { focusedCell = target }
+    }
+
+    /// Move the selection to the cell offset by the given deltas, clamped to
+    /// the table bounds.
+    func moveSelection(rowDelta: Int, columnDelta: Int) {
+      guard let current = selectedCell,
+        let rowIndex = viewModel.rows.firstIndex(where: { $0.id == current.rowID }),
+        let columnIndex = viewModel.headers.firstIndex(where: { $0.id == current.headerID })
+      else { return }
+      let targetRow = min(max(rowIndex + rowDelta, 0), viewModel.rows.count - 1)
+      let targetColumn = min(max(columnIndex + columnDelta, 0), viewModel.headers.count - 1)
+      selectedCell = CellAddress(
+        rowID: viewModel.rows[targetRow].id,
+        headerID: viewModel.headers[targetColumn].id
+      )
+      selectedRows = []
+    }
+
     /// Replace the field editor's begin-editing select-all with a collapsed
     /// cursor at the double-clicked character. Retries because focus is
     /// applied asynchronously after `focusedCell` is set.
@@ -135,7 +176,7 @@ import SwiftUI
                         )
                         .textFieldStyle(.plain)
                         .focused($focusedCell, equals: address)
-                        .onSubmit { editingCell = nil }
+                        .onSubmit { moveEditing(rowDelta: 1, columnDelta: 0) }
                         .onExitCommand { editingCell = nil }
                       } else {
                         Text(viewModel.cellBinding(for: row, header: header).wrappedValue)
@@ -319,17 +360,45 @@ import SwiftUI
       }
       .onAppear {
         sizeAllColumnsToFit()
-        // Shift+Return inserts a line break while editing a cell; a plain
-        // Return still submits via onSubmit.
+        // While editing a cell: Shift+Return inserts a line break (a plain
+        // Return submits via onSubmit and moves down), Tab moves the edit
+        // session to the cell on the right, Shift+Tab to the left.
+        // While a cell is merely selected, the arrow keys move the selection.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
           let returnKey: UInt16 = 36
-          guard editingCell != nil,
-            event.keyCode == returnKey,
-            event.modifierFlags.contains(.shift),
-            let editor = NSApp.keyWindow?.firstResponder as? NSTextView
-          else { return event }
-          editor.insertNewlineIgnoringFieldEditor(nil)
-          return nil
+          let tabKey: UInt16 = 48
+          let leftArrow: UInt16 = 123
+          let rightArrow: UInt16 = 124
+          let downArrow: UInt16 = 125
+          let upArrow: UInt16 = 126
+          if editingCell != nil {
+            if event.keyCode == returnKey,
+              event.modifierFlags.contains(.shift),
+              let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+            {
+              editor.insertNewlineIgnoringFieldEditor(nil)
+              return nil
+            }
+            if event.keyCode == tabKey {
+              moveEditing(
+                rowDelta: 0,
+                columnDelta: event.modifierFlags.contains(.shift) ? -1 : 1
+              )
+              return nil
+            }
+            return event
+          }
+          if selectedCell != nil && editingHeader == nil {
+            switch event.keyCode {
+            case leftArrow: moveSelection(rowDelta: 0, columnDelta: -1)
+            case rightArrow: moveSelection(rowDelta: 0, columnDelta: 1)
+            case downArrow: moveSelection(rowDelta: 1, columnDelta: 0)
+            case upArrow: moveSelection(rowDelta: -1, columnDelta: 0)
+            default: return event
+            }
+            return nil
+          }
+          return event
         }
       }
       .onDisappear {
