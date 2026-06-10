@@ -106,6 +106,7 @@ import SwiftUI
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
                     .frame(width: viewModel.rowNumberColumnWidth, alignment: .trailing)
+                    .frame(maxHeight: .infinity)
                     .background(Color(nsColor: .windowBackgroundColor))
                     .overlay(alignment: .trailing) { Divider() }
                     .contentShape(Rectangle())
@@ -137,6 +138,7 @@ import SwiftUI
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
                     .frame(width: columnWidth(for: header), alignment: .leading)
+                    .frame(maxHeight: .infinity)
                     .background(
                       selectedCell == address ? Color.accentColor.opacity(0.25) : Color.clear
                     )
@@ -172,6 +174,9 @@ import SwiftUI
                     )
                   }
                 }
+                // Size the row to its tallest cell, then let every cell fill
+                // that height so backgrounds and dividers span the full row.
+                .fixedSize(horizontal: false, vertical: true)
                 .background(
                   selectedRows.contains(row.id)
                     ? Color.accentColor.opacity(0.15)
