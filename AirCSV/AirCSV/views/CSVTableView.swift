@@ -468,7 +468,8 @@ import SwiftUI
         // While editing a cell: Shift+Return inserts a line break (a plain
         // Return submits via onSubmit and moves down), Tab moves the edit
         // session to the cell on the right, Shift+Tab to the left.
-        // While a cell is merely selected, the arrow keys move the selection.
+        // While a cell is merely selected, Return starts editing it and the
+        // arrow keys move the selection.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
           let returnKey: UInt16 = 36
           let tabKey: UInt16 = 48
@@ -493,8 +494,11 @@ import SwiftUI
             }
             return event
           }
-          if selectedCell != nil && editingHeader == nil {
+          if let cell = selectedCell, editingHeader == nil {
             switch event.keyCode {
+            case returnKey:
+              editingCell = cell
+              DispatchQueue.main.async { focusedCell = cell }
             case leftArrow: moveSelection(rowDelta: 0, columnDelta: -1)
             case rightArrow: moveSelection(rowDelta: 0, columnDelta: 1)
             case downArrow: moveSelection(rowDelta: 1, columnDelta: 0)
