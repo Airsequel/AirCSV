@@ -9,6 +9,9 @@ BUILD_DIR   = .build
 APP         = $(BUILD_DIR)/Build/Products/Release/AirCSV.app
 USE_NATIVE_TABLE ?=
 SWIFT_ACTIVE_COMPILATION_CONDITIONS ?= $(if $(USE_NATIVE_TABLE),USE_NATIVE_TABLE,)
+# Local builds only compile the active architecture; `make install`
+# overrides this to build a universal binary.
+ONLY_ACTIVE_ARCH ?= YES
 
 
 .PHONY: build  # Pass USE_NATIVE_TABLE=1 to use native SwiftUI Table
@@ -16,6 +19,7 @@ build:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) \
 		-configuration Release -derivedDataPath $(BUILD_DIR) \
 		CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+		ONLY_ACTIVE_ARCH=$(ONLY_ACTIVE_ARCH) \
 		SWIFT_ACTIVE_COMPILATION_CONDITIONS="$(SWIFT_ACTIVE_COMPILATION_CONDITIONS)"
 
 
@@ -39,7 +43,8 @@ format:
 		|| echo "swift-format not found (brew install swift-format)"
 
 
-.PHONY: install  # Install AirCSV.app to /Applications
+.PHONY: install  # Install AirCSV.app (universal binary) to /Applications
+install: ONLY_ACTIVE_ARCH = NO
 install: build
 	cp -R "$(APP)" /Applications/
 
