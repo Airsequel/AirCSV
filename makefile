@@ -27,6 +27,11 @@ test:
 		SWIFT_ACTIVE_COMPILATION_CONDITIONS="$(SWIFT_ACTIVE_COMPILATION_CONDITIONS)"
 
 
+.PHONY: start  # Build and launch AirCSV.app with example.csv
+start: build
+	"$(APP)/Contents/MacOS/AirCSV" example.csv
+
+
 .PHONY: format
 format:
 	@which swift-format > /dev/null 2>&1 \
