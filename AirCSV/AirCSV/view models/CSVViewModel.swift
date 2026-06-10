@@ -109,6 +109,20 @@ class CSVViewModel: ObservableObject {
     }
   }
 
+  func addRow() {
+    rows.append(CSVRow(cells: headers.map { _ in CSVCell(content: "") }))
+  }
+
+  func addColumn() {
+    headers.append(
+      CSVHeader(name: "Column \(headers.count + 1)", columnIndex: headers.count))
+    for index in rows.indices {
+      while rows[index].cells.count < headers.count {
+        rows[index].cells.append(CSVCell(content: ""))
+      }
+    }
+  }
+
   func cellBinding(for row: CSVRow, header: CSVHeader) -> Binding<String> {
     Binding {
       if let r = self.rows.first(where: { $0.id == row.id }),

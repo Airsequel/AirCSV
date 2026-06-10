@@ -68,9 +68,16 @@ import SwiftUI
     @State private var columnWidths: [UUID: CGFloat] = [:]
     @State private var dragStartWidths: [UUID: CGFloat] = [:]
     @State private var keyMonitor: Any?
+    @State private var hoveringAddRow = false
+    @State private var hoveringAddColumn = false
 
     func columnWidth(for header: CSVHeader) -> CGFloat {
       columnWidths[header.id] ?? viewModel.idealWidth(for: header)
+    }
+
+    /// Width of a data row: row number column plus all data columns.
+    var tableWidth: CGFloat {
+      viewModel.headers.reduce(viewModel.rowNumberColumnWidth) { $0 + columnWidth(for: $1) }
     }
 
     func sizeAllColumnsToFit() {
@@ -193,6 +200,29 @@ import SwiftUI
                   }
                 }
               }
+              Button {
+                viewModel.addRow()
+              } label: {
+                Image(systemName: "plus")
+                  .padding(.horizontal, 8)
+                  .padding(.vertical, 6)
+                  .frame(width: tableWidth)
+                  .background(
+                    hoveringAddRow
+                      ? Color.accentColor.opacity(0.25)
+                      : Color.white
+                  )
+                  // A bare Divider on an Image base renders vertical; the
+                  // VStack forces the horizontal orientation.
+                  .overlay(alignment: .bottom) { VStack(spacing: 0) { Divider() } }
+                  .overlay(alignment: .trailing) { Divider() }
+                  .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .focusEffectDisabled()
+              .foregroundStyle(.secondary)
+              .onHover { hoveringAddRow = $0 }
+              .help("Add row")
             } header: {
               HStack(spacing: 0) {
                 Text("#")
@@ -226,6 +256,26 @@ import SwiftUI
                         )
                     }
                 }
+                Button {
+                  viewModel.addColumn()
+                } label: {
+                  Image(systemName: "plus")
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(maxHeight: .infinity)
+                    .background(
+                      hoveringAddColumn
+                        ? Color.accentColor.opacity(0.25)
+                        : Color.white
+                    )
+                    .overlay(alignment: .trailing) { Divider() }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .foregroundStyle(.secondary)
+                .onHover { hoveringAddColumn = $0 }
+                .help("Add column")
               }
               .background(.white)
               .overlay(alignment: .top) { Divider() }
@@ -258,7 +308,14 @@ import SwiftUI
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
       }
-      .onChange(of: viewModel.headers) { sizeAllColumnsToFit() }
+      // Only size columns without a stored width so adding a column doesn't
+      // discard manual resizes. A newly imported file gets fresh header IDs,
+      // so all its columns are sized.
+      .onChange(of: viewModel.headers) {
+        for header in viewModel.headers where columnWidths[header.id] == nil {
+          columnWidths[header.id] = viewModel.fitWidth(for: header)
+        }
+      }
       .onChange(of: focusedCell) { oldValue, newValue in
         // Only end editing when the *editing* cell lost focus. Comparing
         // against the old value avoids killing a freshly started edit session

@@ -53,6 +53,28 @@ final class AirCSVTests: XCTestCase {
     }
 
     @MainActor
+    func testAddRow() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2")
+        vm.addRow()
+        XCTAssertEqual(vm.rows.count, 2)
+        XCTAssertEqual(vm.rows[1].cells.count, 2)
+        XCTAssertEqual(vm.rows[1].cells.map(\.content), ["", ""])
+    }
+
+    @MainActor
+    func testAddColumn() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2\n3,4")
+        vm.addColumn()
+        XCTAssertEqual(vm.headers.count, 3)
+        XCTAssertEqual(vm.headers[2].name, "Column 3")
+        XCTAssertEqual(vm.headers[2].columnIndex, 2)
+        XCTAssertTrue(vm.rows.allSatisfy { $0.cells.count == 3 })
+        XCTAssertEqual(vm.rows[0].cells[2].content, "")
+    }
+
+    @MainActor
     func testDeleteRowWithSelection() {
         let vm = CSVViewModel()
         vm.parseCSV(content: "A,B\n1,2\n3,4\n5,6")
