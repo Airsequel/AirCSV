@@ -225,6 +225,35 @@ class CSVViewModel: ObservableObject {
     }
   }
 
+  /// Moves the row to the given position. Out-of-bounds indices are
+  /// ignored.
+  func move(rowAt from: Int, to: Int) {
+    guard from != to, rows.indices.contains(from), rows.indices.contains(to) else { return }
+    performUndoable("Move Row") {
+      let row = rows.remove(at: from)
+      rows.insert(row, at: to)
+    }
+  }
+
+  /// Moves the column (header and every row's cell) to the given
+  /// position and renumbers the column indices.
+  func move(columnAt from: Int, to: Int) {
+    guard from != to, headers.indices.contains(from), headers.indices.contains(to) else {
+      return
+    }
+    performUndoable("Move Column") {
+      let header = headers.remove(at: from)
+      headers.insert(header, at: to)
+      for index in rows.indices where rows[index].cells.indices.contains(from) {
+        let cell = rows[index].cells.remove(at: from)
+        rows[index].cells.insert(cell, at: min(to, rows[index].cells.count))
+      }
+      for index in headers.indices {
+        headers[index].columnIndex = index
+      }
+    }
+  }
+
   func headerBinding(for header: CSVHeader) -> Binding<String> {
     Binding {
       self.headers.first(where: { $0.id == header.id })?.name ?? ""

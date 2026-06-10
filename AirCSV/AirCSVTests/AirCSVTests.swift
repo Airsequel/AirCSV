@@ -236,6 +236,33 @@ final class AirCSVTests: XCTestCase {
     }
 
     @MainActor
+    func testMoveRow() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2\n3,4\n5,6")
+        vm.move(rowAt: 0, to: 2)
+        XCTAssertEqual(vm.rows.map { $0.cells[0].content }, ["3", "5", "1"])
+    }
+
+    @MainActor
+    func testMoveRowOutOfBoundsIsIgnored() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B\n1,2\n3,4")
+        vm.move(rowAt: 0, to: 5)
+        XCTAssertEqual(vm.rows.map { $0.cells[0].content }, ["1", "3"])
+    }
+
+    @MainActor
+    func testMoveColumn() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B,C\n1,2,3\n4,5,6")
+        vm.move(columnAt: 2, to: 0)
+        XCTAssertEqual(vm.headers.map(\.name), ["C", "A", "B"])
+        XCTAssertEqual(vm.headers.map(\.columnIndex), [0, 1, 2])
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["3", "1", "2"])
+        XCTAssertEqual(vm.rows[1].cells.map(\.content), ["6", "4", "5"])
+    }
+
+    @MainActor
     func testUndoRedoDeleteRow() {
         let vm = CSVViewModel()
         let undoManager = UndoManager()
@@ -260,6 +287,20 @@ final class AirCSVTests: XCTestCase {
         undoManager.undo()
         XCTAssertEqual(vm.headers.map(\.name), ["A", "B"])
         XCTAssertEqual(vm.rows[0].cells.map(\.content), ["1", "2"])
+    }
+
+    @MainActor
+    func testUndoMoveColumn() {
+        let vm = CSVViewModel()
+        let undoManager = UndoManager()
+        vm.undoManager = undoManager
+        vm.parseCSV(content: "A,B,C\n1,2,3")
+        vm.move(columnAt: 0, to: 2)
+        XCTAssertEqual(vm.headers.map(\.name), ["B", "C", "A"])
+        undoManager.undo()
+        XCTAssertEqual(vm.headers.map(\.name), ["A", "B", "C"])
+        XCTAssertEqual(vm.headers.map(\.columnIndex), [0, 1, 2])
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["1", "2", "3"])
     }
 
     @MainActor

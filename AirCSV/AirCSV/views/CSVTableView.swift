@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CellAddress: Hashable {
   let rowID: CSVRow.ID
@@ -24,6 +25,13 @@ struct CSVTableView: View {
   @State private var hoveringAddColumn = false
   @State private var editingHeader: CSVHeader.ID?
   @FocusState private var focusedHeader: CSVHeader.ID?
+  @State private var draggedRow: CSVRow.ID?
+  @State private var draggedColumn: CSVHeader.ID?
+  @State private var rowDropIndicator: RowDropIndicator?
+  @State private var columnDropIndicator: ColumnDropIndicator?
+  /// Rendered row heights, needed for the drop midpoint test because
+  /// wrapped cells make row heights vary.
+  @State private var rowHeights: [CSVRow.ID: CGFloat] = [:]
 
   func columnWidth(for header: CSVHeader) -> CGFloat {
     columnWidths[header.id] ?? viewModel.idealWidth(for: header)
@@ -188,9 +196,31 @@ struct CSVTableView: View {
     editor.setSelectedRange(NSRange(location: index, length: 0))
   }
 
+  /// Index of the gap (0...rows.count) the row drop indicator points at,
+  /// or nil. A gap has two hover representations (below one row, above
+  /// the next); mapping both to one index keeps the rendered line from
+  /// jumping when the cursor crosses the edge between them.
+  func indicatedRowGap() -> Int? {
+    guard let indicator = rowDropIndicator,
+      let index = viewModel.rows.firstIndex(where: { $0.id == indicator.rowID })
+    else { return nil }
+    return indicator.insertAfter ? index + 1 : index
+  }
+
+  /// Index of the gap (0...headers.count) the column drop indicator
+  /// points at, or nil. See `indicatedRowGap`.
+  func indicatedColumnGap() -> Int? {
+    guard let indicator = columnDropIndicator,
+      let index = viewModel.headers.firstIndex(where: { $0.id == indicator.headerID })
+    else { return nil }
+    return indicator.insertAfter ? index + 1 : index
+  }
+
   var body: some View {
     // Computed once per render; cells check membership by index.
     let selection = selectionRange()
+    let rowGap = indicatedRowGap()
+    let columnGap = indicatedColumnGap()
     GeometryReader { geometry in
       ScrollView([.horizontal, .vertical]) {
         LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
@@ -214,6 +244,11 @@ struct CSVTableView: View {
                     selectionEnd = nil
                     editingCell = nil
                     focusedCell = nil
+                  }
+                  .onDrag {
+                    draggedRow = row.id
+                    draggedColumn = nil
+                    return NSItemProvider(object: row.id.uuidString as NSString)
                   }
                   .overlay(
                     RightClickMenu {
@@ -271,6 +306,20 @@ struct CSVTableView: View {
                         : Color.clear
                   )
                   .overlay(alignment: .trailing) { Divider() }
+                  // Insertion line for the gap left of this column — or,
+                  // on the last column, also for the gap right of it.
+                  .overlay(alignment: .leading) {
+                    if columnGap == header.columnIndex {
+                      Rectangle().fill(Color.accentColor).frame(width: 2)
+                    }
+                  }
+                  .overlay(alignment: .trailing) {
+                    if header.columnIndex == viewModel.headers.count - 1,
+                      columnGap == viewModel.headers.count
+                    {
+                      Rectangle().fill(Color.accentColor).frame(width: 2)
+                    }
+                  }
                   .contentShape(Rectangle())
                   .simultaneousGesture(
                     TapGesture().onEnded {
@@ -360,7 +409,36 @@ struct CSVTableView: View {
                     NSColor.alternatingContentBackgroundColors[index.isMultiple(of: 2) ? 0 : 1])
               )
               .overlay(alignment: .bottom) { Divider() }
+              // Insertion line for the gap above this row — or, on the
+              // last row, also for the gap below it.
+              .overlay(alignment: .top) {
+                if rowGap == index {
+                  Rectangle().fill(Color.accentColor).frame(height: 2)
+                }
+              }
+              .overlay(alignment: .bottom) {
+                if index == viewModel.rows.count - 1, rowGap == viewModel.rows.count {
+                  Rectangle().fill(Color.accentColor).frame(height: 2)
+                }
+              }
               .contentShape(Rectangle())
+              // Records the row height for the drop delegate's midpoint
+              // test without affecting layout or hit testing.
+              .background(
+                GeometryReader { geometry in
+                  Color.clear
+                    .onAppear { rowHeights[row.id] = geometry.size.height }
+                    .onChange(of: geometry.size.height) {
+                      rowHeights[row.id] = geometry.size.height
+                    }
+                }
+              )
+              .onDrop(
+                of: [.text],
+                delegate: RowReorderDropDelegate(
+                  rowID: row.id, rowHeight: rowHeights[row.id] ?? 0,
+                  viewModel: viewModel,
+                  draggedRow: $draggedRow, indicator: $rowDropIndicator))
             }
             Button {
               viewModel.addRow()
@@ -385,6 +463,13 @@ struct CSVTableView: View {
             .foregroundStyle(.secondary)
             .onHover { hoveringAddRow = $0 }
             .help("Add row")
+            // The strip below the last row accepts row drags, so the gap
+            // after the last row has a drop area below its line too.
+            .onDrop(
+              of: [.text],
+              delegate: RowEndDropDelegate(
+                viewModel: viewModel,
+                draggedRow: $draggedRow, indicator: $rowDropIndicator))
           } header: {
             HStack(spacing: 0) {
               Text("#")
@@ -438,6 +523,11 @@ struct CSVTableView: View {
                     }
                   }
                 )
+                .onDrag {
+                  draggedColumn = header.id
+                  draggedRow = nil
+                  return NSItemProvider(object: header.id.uuidString as NSString)
+                }
                 .overlay {
                   // No catcher while renaming, so the field editor keeps
                   // its own clicks and text context menu.
@@ -469,22 +559,42 @@ struct CSVTableView: View {
                   }
                 }
                 .overlay(alignment: .trailing) {
-                    ResizeHandle()
-                      .onTapGesture(count: 2) {
-                        columnWidths[header.id] = viewModel.fitWidth(for: header)
-                      }
-                      .gesture(
-                        DragGesture(coordinateSpace: .global)
-                          .onChanged { value in
-                            if dragStartWidths[header.id] == nil {
-                              dragStartWidths[header.id] = columnWidth(for: header)
-                            }
-                            columnWidths[header.id] = max(
-                              50, (dragStartWidths[header.id] ?? 50) + value.translation.width)
+                  ResizeHandle()
+                    .onTapGesture(count: 2) {
+                      columnWidths[header.id] = viewModel.fitWidth(for: header)
+                    }
+                    .gesture(
+                      DragGesture(coordinateSpace: .global)
+                        .onChanged { value in
+                          if dragStartWidths[header.id] == nil {
+                            dragStartWidths[header.id] = columnWidth(for: header)
                           }
-                          .onEnded { _ in dragStartWidths[header.id] = nil }
-                      )
+                          columnWidths[header.id] = max(
+                            50, (dragStartWidths[header.id] ?? 50) + value.translation.width)
+                        }
+                        .onEnded { _ in dragStartWidths[header.id] = nil }
+                    )
+                }
+                // Insertion line for the gap left of this column — or,
+                // on the last column, also for the gap right of it.
+                .overlay(alignment: .leading) {
+                  if columnGap == header.columnIndex {
+                    Rectangle().fill(Color.accentColor).frame(width: 2)
                   }
+                }
+                .overlay(alignment: .trailing) {
+                  if header.columnIndex == viewModel.headers.count - 1,
+                    columnGap == viewModel.headers.count
+                  {
+                    Rectangle().fill(Color.accentColor).frame(width: 2)
+                  }
+                }
+                .onDrop(
+                  of: [.text],
+                  delegate: ColumnReorderDropDelegate(
+                    headerID: header.id, columnWidth: columnWidth(for: header),
+                    viewModel: viewModel,
+                    draggedColumn: $draggedColumn, indicator: $columnDropIndicator))
               }
               Button {
                 viewModel.addColumn()
@@ -506,6 +616,14 @@ struct CSVTableView: View {
               .foregroundStyle(.secondary)
               .onHover { hoveringAddColumn = $0 }
               .help("Add column")
+              // The strip right of the last header accepts column drags,
+              // so the gap after the last column has a drop area right of
+              // its line too.
+              .onDrop(
+                of: [.text],
+                delegate: ColumnEndDropDelegate(
+                  viewModel: viewModel,
+                  draggedColumn: $draggedColumn, indicator: $columnDropIndicator))
             }
             .background(.white)
             .overlay(alignment: .top) { Divider() }
@@ -618,6 +736,224 @@ struct CSVTableView: View {
         editingHeader = nil
       }
     }
+  }
+}
+
+/// Animation for the reorder applied on drop.
+private let moveAnimation: Animation = .easeOut(duration: 0.15)
+
+/// The gap a hovering row drag would insert into: before the row when
+/// the cursor is in its upper half, after it otherwise. Rendered via
+/// `indicatedRowGap()` so both hover representations of one gap draw the
+/// same insertion line.
+struct RowDropIndicator: Equatable {
+  let rowID: CSVRow.ID
+  let insertAfter: Bool
+}
+
+/// The gap a hovering column drag would insert into: before the column
+/// when the cursor is in its left half, after it otherwise. Rendered via
+/// `indicatedColumnGap()` so both hover representations of one gap draw
+/// the same insertion line.
+struct ColumnDropIndicator: Equatable {
+  let headerID: CSVHeader.ID
+  let insertAfter: Bool
+}
+
+/// Shows an insertion indicator while a drag from the row-number column
+/// hovers over rows; the actual move happens once, on drop.
+private struct RowReorderDropDelegate: DropDelegate {
+  let rowID: CSVRow.ID
+  let rowHeight: CGFloat
+  let viewModel: CSVViewModel
+  @Binding var draggedRow: CSVRow.ID?
+  @Binding var indicator: RowDropIndicator?
+
+  /// Whether the cursor is in the lower half of the hovered row.
+  private func insertAfter(_ info: DropInfo) -> Bool {
+    info.location.y > rowHeight / 2
+  }
+
+  /// Source index of the dragged row and the index it would end up at
+  /// for the hovered gap, or nil when no row drag is active.
+  private func moveIndices(_ info: DropInfo) -> (from: Int, to: Int)? {
+    guard let dragged = draggedRow,
+      let from = viewModel.rows.firstIndex(where: { $0.id == dragged }),
+      let target = viewModel.rows.firstIndex(where: { $0.id == rowID })
+    else { return nil }
+    var to = insertAfter(info) ? target + 1 : target
+    if from < to { to -= 1 }
+    return (from, to)
+  }
+
+  func validateDrop(info: DropInfo) -> Bool {
+    draggedRow != nil
+  }
+
+  func dropUpdated(info: DropInfo) -> DropProposal? {
+    guard let (from, to) = moveIndices(info) else { return nil }
+    // No line for gaps adjacent to the dragged row: dropping there
+    // wouldn't move anything.
+    indicator =
+      from == to
+      ? nil
+      : RowDropIndicator(rowID: rowID, insertAfter: insertAfter(info))
+    return DropProposal(operation: .move)
+  }
+
+  func dropExited(info: DropInfo) {
+    if indicator?.rowID == rowID { indicator = nil }
+  }
+
+  func performDrop(info: DropInfo) -> Bool {
+    defer {
+      draggedRow = nil
+      indicator = nil
+    }
+    guard let (from, to) = moveIndices(info), from != to else { return false }
+    withAnimation(moveAnimation) { viewModel.move(rowAt: from, to: to) }
+    return true
+  }
+}
+
+/// Shows an insertion indicator while a header drag hovers over headers;
+/// the actual move happens once, on drop.
+private struct ColumnReorderDropDelegate: DropDelegate {
+  let headerID: CSVHeader.ID
+  let columnWidth: CGFloat
+  let viewModel: CSVViewModel
+  @Binding var draggedColumn: CSVHeader.ID?
+  @Binding var indicator: ColumnDropIndicator?
+
+  /// Whether the cursor is in the right half of the hovered header.
+  private func insertAfter(_ info: DropInfo) -> Bool {
+    info.location.x > columnWidth / 2
+  }
+
+  /// Source index of the dragged column and the index it would end up
+  /// at for the hovered gap, or nil when no column drag is active.
+  private func moveIndices(_ info: DropInfo) -> (from: Int, to: Int)? {
+    guard let dragged = draggedColumn,
+      let from = viewModel.headers.firstIndex(where: { $0.id == dragged }),
+      let target = viewModel.headers.firstIndex(where: { $0.id == headerID })
+    else { return nil }
+    var to = insertAfter(info) ? target + 1 : target
+    if from < to { to -= 1 }
+    return (from, to)
+  }
+
+  func validateDrop(info: DropInfo) -> Bool {
+    draggedColumn != nil
+  }
+
+  func dropUpdated(info: DropInfo) -> DropProposal? {
+    guard let (from, to) = moveIndices(info) else { return nil }
+    // No line for gaps adjacent to the dragged column: dropping there
+    // wouldn't move anything.
+    indicator =
+      from == to
+      ? nil
+      : ColumnDropIndicator(headerID: headerID, insertAfter: insertAfter(info))
+    return DropProposal(operation: .move)
+  }
+
+  func dropExited(info: DropInfo) {
+    if indicator?.headerID == headerID { indicator = nil }
+  }
+
+  func performDrop(info: DropInfo) -> Bool {
+    defer {
+      draggedColumn = nil
+      indicator = nil
+    }
+    guard let (from, to) = moveIndices(info), from != to else { return false }
+    withAnimation(moveAnimation) { viewModel.move(columnAt: from, to: to) }
+    return true
+  }
+}
+
+/// Drop target on the add-row strip: moves the dragged row to the end.
+private struct RowEndDropDelegate: DropDelegate {
+  let viewModel: CSVViewModel
+  @Binding var draggedRow: CSVRow.ID?
+  @Binding var indicator: RowDropIndicator?
+
+  func validateDrop(info: DropInfo) -> Bool {
+    draggedRow != nil
+  }
+
+  func dropUpdated(info: DropInfo) -> DropProposal? {
+    guard draggedRow != nil, let last = viewModel.rows.last else { return nil }
+    // No line when the dragged row already is the last row.
+    indicator =
+      last.id == draggedRow
+      ? nil
+      : RowDropIndicator(rowID: last.id, insertAfter: true)
+    return DropProposal(operation: .move)
+  }
+
+  func dropExited(info: DropInfo) {
+    if indicator == viewModel.rows.last.map({ RowDropIndicator(rowID: $0.id, insertAfter: true) }) {
+      indicator = nil
+    }
+  }
+
+  func performDrop(info: DropInfo) -> Bool {
+    defer {
+      draggedRow = nil
+      indicator = nil
+    }
+    guard let dragged = draggedRow,
+      let from = viewModel.rows.firstIndex(where: { $0.id == dragged })
+    else { return false }
+    withAnimation(moveAnimation) {
+      viewModel.move(rowAt: from, to: viewModel.rows.count - 1)
+    }
+    return true
+  }
+}
+
+/// Drop target on the add-column strip: moves the dragged column to the
+/// end.
+private struct ColumnEndDropDelegate: DropDelegate {
+  let viewModel: CSVViewModel
+  @Binding var draggedColumn: CSVHeader.ID?
+  @Binding var indicator: ColumnDropIndicator?
+
+  func validateDrop(info: DropInfo) -> Bool {
+    draggedColumn != nil
+  }
+
+  func dropUpdated(info: DropInfo) -> DropProposal? {
+    guard draggedColumn != nil, let last = viewModel.headers.last else { return nil }
+    // No line when the dragged column already is the last column.
+    indicator =
+      last.id == draggedColumn
+      ? nil
+      : ColumnDropIndicator(headerID: last.id, insertAfter: true)
+    return DropProposal(operation: .move)
+  }
+
+  func dropExited(info: DropInfo) {
+    if indicator
+      == viewModel.headers.last.map({ ColumnDropIndicator(headerID: $0.id, insertAfter: true) })
+    {
+      indicator = nil
+    }
+  }
+
+  func performDrop(info: DropInfo) -> Bool {
+    defer {
+      draggedColumn = nil
+      indicator = nil
+    }
+    guard let dragged = draggedColumn,
+      let from = viewModel.headers.firstIndex(where: { $0.id == dragged })
+    else { return false }
+    withAnimation(moveAnimation) {
+      viewModel.move(columnAt: from, to: viewModel.headers.count - 1)
+    }
+    return true
   }
 }
 
