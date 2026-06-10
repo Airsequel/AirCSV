@@ -70,6 +70,26 @@ class CSVViewModel: ObservableObject {
     return min(400, max(50, CGFloat(maxLength) * 8.5 + 24))
   }
 
+  /// Minimum width that shows all content of the column, without the cap
+  /// applied by `idealWidth(for:)`. Measures the rendered text widths.
+  func fitWidth(for header: CSVHeader) -> CGFloat {
+    let cellFont = NSFont.monospacedSystemFont(
+      ofSize: NSFont.systemFontSize, weight: .regular)
+    let headerFont = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+
+    let headerWidth = (header.name as NSString)
+      .size(withAttributes: [.font: headerFont]).width
+    let maxCellWidth =
+      rows.compactMap { row -> CGFloat? in
+        guard row.cells.count > header.columnIndex else { return nil }
+        return (row.cells[header.columnIndex].content as NSString)
+          .size(withAttributes: [.font: cellFont]).width
+      }.max() ?? 0
+
+    let horizontalPadding: CGFloat = 16
+    return max(50, ceil(max(headerWidth, maxCellWidth)) + horizontalPadding)
+  }
+
   //MARK: - Edit
 
   func delete(row: CSVRow, selection: Set<CSVRow.ID>) {

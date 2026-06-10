@@ -1,6 +1,6 @@
 import Foundation
 
-struct CSVHeader: Identifiable {
+struct CSVHeader: Identifiable, Equatable {
   var id: UUID = UUID()
   var name: String
   var columnIndex: Int = 0

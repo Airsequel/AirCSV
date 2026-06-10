@@ -56,6 +56,12 @@ import SwiftUI
       columnWidths[header.id] ?? viewModel.idealWidth(for: header)
     }
 
+    func sizeAllColumnsToFit() {
+      for header in viewModel.headers {
+        columnWidths[header.id] = viewModel.fitWidth(for: header)
+      }
+    }
+
     var body: some View {
       GeometryReader { geometry in
         ScrollView([.horizontal, .vertical]) {
@@ -101,6 +107,9 @@ import SwiftUI
                     .frame(width: columnWidth(for: header), alignment: .leading)
                     .overlay(alignment: .trailing) {
                       ResizeHandle()
+                        .onTapGesture(count: 2) {
+                          columnWidths[header.id] = viewModel.fitWidth(for: header)
+                        }
                         .gesture(
                           DragGesture(coordinateSpace: .global)
                             .onChanged { value in
@@ -127,6 +136,8 @@ import SwiftUI
           )
         }
       }
+      .onAppear { sizeAllColumnsToFit() }
+      .onChange(of: viewModel.headers) { sizeAllColumnsToFit() }
     }
   }
 
