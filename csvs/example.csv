@@ -1,9 +1,9 @@
-Name,Age,City,Occupation
-Alice Johnson,34,Berlin,Software Engineer
-Bob Smith,45,Hamburg,Product Manager
-Carla Méndez,28,Munich,Data Analyst
-David Lee,52,Frankfurt,CFO
-Emma Wilson,31,Cologne,UX Designer
-Felix Bauer,39,Stuttgart,DevOps Engineer
-Grace Kim,26,Berlin,Junior Developer
-Henrik Larsen,41,Düsseldorf,Sales Director
+City,Occupation,Age,Name
+Stuttgart,DevOps Engineer,39,Felix Bauer
+Düsseldorf,Sales Director,41,Henrik Larsen
+Cologne,UX Designer,31,Emma Wilson
+Hamburg,Product Manager,45,Bob Smith
+Munich,Data Analyst,28,Carla Méndez
+Berlin,Junior Developer,26,Grace Kim
+Berlin,Software Engineer,34,Alice Johnson
+Frankfurt,CFO,52,David Lee
