@@ -3,10 +3,13 @@ import SwiftUI
 struct ContentView: View {
 
   @ObservedObject var viewModel: CSVViewModel
+  @Environment(\.undoManager) private var undoManager
   @State private var wrapContent: Bool = true
 
   var body: some View {
     CSVTableView(viewModel: viewModel, wrapContent: $wrapContent)
+      .onAppear { viewModel.undoManager = undoManager }
+      .onChange(of: undoManager) { viewModel.undoManager = undoManager }
       .toolbar {
         CSVImportButton(viewModel: viewModel)
           .labelStyle(.titleAndIcon)

@@ -550,8 +550,9 @@ struct CSVTableView: View {
           }
           return event
         }
-        // Cmd+C/X/V act on the selected cell, rows, or columns. While
-        // editing, the field editor handles them (returned above).
+        // Cmd+C/X/V act on the selected cell, rows, or columns; Cmd+Z and
+        // Shift+Cmd+Z undo and redo. While editing, the field editor
+        // handles them (returned above).
         if editingHeader == nil,
           event.modifierFlags.contains(.command),
           !event.modifierFlags.contains(.option),
@@ -562,6 +563,13 @@ struct CSVTableView: View {
           case "c": if copySelection() { return nil }
           case "x": if cutSelection() { return nil }
           case "v": if pasteSelection() { return nil }
+          case "z", "Z":
+            if event.modifierFlags.contains(.shift) {
+              viewModel.undoManager?.redo()
+            } else {
+              viewModel.undoManager?.undo()
+            }
+            return nil
           default: break
           }
         }
@@ -594,6 +602,9 @@ struct CSVTableView: View {
         columnWidths[header.id] = viewModel.fitWidth(for: header)
       }
     }
+    // A new edit session is a new undo step, even for the same cell.
+    .onChange(of: editingCell) { viewModel.breakUndoCoalescing() }
+    .onChange(of: editingHeader) { viewModel.breakUndoCoalescing() }
     .onChange(of: focusedCell) { oldValue, newValue in
       // Only end editing when the *editing* cell lost focus. Comparing
       // against the old value avoids killing a freshly started edit session

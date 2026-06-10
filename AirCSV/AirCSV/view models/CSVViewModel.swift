@@ -8,6 +8,15 @@ class CSVViewModel: ObservableObject {
   @Published var headers: [CSVHeader] = []
   @Published var rows: [CSVRow] = []
 
+  /// The window's undo manager, injected by the view layer. Weak because
+  /// the window owns it.
+  weak var undoManager: UndoManager?
+  private var undoableActionDepth = 0
+  /// Coalescing key of the most recent undo registration. Consecutive
+  /// actions with the same key (e.g. keystrokes into one cell) merge
+  /// into a single undo step.
+  private var lastCoalescingKey: String?
+
   init() {
 
   }
@@ -52,9 +61,58 @@ class CSVViewModel: ObservableObject {
       self.headers = CSVHeader.createHeaders(data: data.header)
       self.rows = data.rows.map({ CSVRow(cells: $0.map({ CSVCell(content: $0) })) })
 
+      // A freshly loaded file starts with a clean editing history.
+      undoManager?.removeAllActions(withTarget: self)
+      lastCoalescingKey = nil
     } catch {
       print(error)
     }
+  }
+
+  //MARK: - Undo
+
+  private struct TableState {
+    let headers: [CSVHeader]
+    let rows: [CSVRow]
+  }
+
+  /// Runs the mutation as a single undoable action by snapshotting the
+  /// whole table beforehand. Nested calls register no extra snapshots.
+  /// Consecutive actions with the same non-nil coalescing key merge into
+  /// one undo step.
+  private func performUndoable(
+    _ actionName: String, coalescing key: String? = nil, mutate: () -> Void
+  ) {
+    if undoableActionDepth == 0 {
+      registerUndoSnapshot(actionName, coalescing: key)
+    }
+    undoableActionDepth += 1
+    defer { undoableActionDepth -= 1 }
+    mutate()
+  }
+
+  private func registerUndoSnapshot(_ actionName: String, coalescing key: String?) {
+    defer { lastCoalescingKey = key }
+    if let key, key == lastCoalescingKey { return }
+    let state = TableState(headers: headers, rows: rows)
+    undoManager?.registerUndo(withTarget: self) { $0.restore(state) }
+    undoManager?.setActionName(actionName)
+  }
+
+  /// Swaps the table back to the given snapshot, registering the inverse
+  /// so the same mechanism serves undo and redo.
+  private func restore(_ state: TableState) {
+    let current = TableState(headers: headers, rows: rows)
+    undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
+    headers = state.headers
+    rows = state.rows
+    lastCoalescingKey = nil
+  }
+
+  /// Ends the current coalescing run so the next edit with the same key
+  /// starts a new undo step (e.g. when an edit session ends).
+  func breakUndoCoalescing() {
+    lastCoalescingKey = nil
   }
 
   //MARK: - Layout
@@ -97,10 +155,12 @@ class CSVViewModel: ObservableObject {
   //MARK: - Edit
 
   func delete(row: CSVRow, selection: Set<CSVRow.ID>) {
-    if selection.contains(row.id) {
-      self.rows.removeAll { selection.contains($0.id) }
-    } else {
-      self.rows.removeAll(where: { $0.id == row.id })
+    performUndoable("Delete Row") {
+      if selection.contains(row.id) {
+        self.rows.removeAll { selection.contains($0.id) }
+      } else {
+        self.rows.removeAll(where: { $0.id == row.id })
+      }
     }
   }
 
@@ -109,46 +169,58 @@ class CSVViewModel: ObservableObject {
   }
 
   func clear(rows selection: Set<CSVRow.ID>) {
-    for index in rows.indices where selection.contains(rows[index].id) {
-      for cellIndex in rows[index].cells.indices {
-        rows[index].cells[cellIndex].content = ""
+    performUndoable("Clear Rows") {
+      for index in rows.indices where selection.contains(rows[index].id) {
+        for cellIndex in rows[index].cells.indices {
+          rows[index].cells[cellIndex].content = ""
+        }
       }
     }
   }
 
   func clear(columns selection: Set<CSVHeader.ID>) {
-    for header in headers where selection.contains(header.id) {
-      clear(column: header)
+    performUndoable("Clear Columns") {
+      for header in headers where selection.contains(header.id) {
+        clear(column: header)
+      }
     }
   }
 
   func clear(column header: CSVHeader) {
-    for index in rows.indices where rows[index].cells.indices.contains(header.columnIndex) {
-      rows[index].cells[header.columnIndex].content = ""
+    performUndoable("Clear Column") {
+      for index in rows.indices where rows[index].cells.indices.contains(header.columnIndex) {
+        rows[index].cells[header.columnIndex].content = ""
+      }
     }
   }
 
   func delete(column header: CSVHeader) {
     guard let headerIndex = headers.firstIndex(where: { $0.id == header.id }) else { return }
-    headers.remove(at: headerIndex)
-    for index in rows.indices where rows[index].cells.indices.contains(header.columnIndex) {
-      rows[index].cells.remove(at: header.columnIndex)
-    }
-    for index in headers.indices {
-      headers[index].columnIndex = index
+    performUndoable("Delete Column") {
+      headers.remove(at: headerIndex)
+      for index in rows.indices where rows[index].cells.indices.contains(header.columnIndex) {
+        rows[index].cells.remove(at: header.columnIndex)
+      }
+      for index in headers.indices {
+        headers[index].columnIndex = index
+      }
     }
   }
 
   func addRow() {
-    rows.append(CSVRow(cells: headers.map { _ in CSVCell(content: "") }))
+    performUndoable("Add Row") {
+      rows.append(CSVRow(cells: headers.map { _ in CSVCell(content: "") }))
+    }
   }
 
   func addColumn() {
-    headers.append(
-      CSVHeader(name: "Column \(headers.count + 1)", columnIndex: headers.count))
-    for index in rows.indices {
-      while rows[index].cells.count < headers.count {
-        rows[index].cells.append(CSVCell(content: ""))
+    performUndoable("Add Column") {
+      headers.append(
+        CSVHeader(name: "Column \(headers.count + 1)", columnIndex: headers.count))
+      for index in rows.indices {
+        while rows[index].cells.count < headers.count {
+          rows[index].cells.append(CSVCell(content: ""))
+        }
       }
     }
   }
@@ -157,8 +229,12 @@ class CSVViewModel: ObservableObject {
     Binding {
       self.headers.first(where: { $0.id == header.id })?.name ?? ""
     } set: { newValue in
-      if let index = self.headers.firstIndex(where: { $0.id == header.id }) {
-        self.headers[index].name = newValue
+      if let index = self.headers.firstIndex(where: { $0.id == header.id }),
+        self.headers[index].name != newValue
+      {
+        self.performUndoable("Rename Column", coalescing: "header-\(header.id)") {
+          self.headers[index].name = newValue
+        }
       }
     }
   }
@@ -172,8 +248,12 @@ class CSVViewModel: ObservableObject {
       }
       return ""
     } set: { newValue in
-      if let rowIndex = self.rows.firstIndex(where: { $0.id == row.id }) {
-        self.rows[rowIndex].cells[header.columnIndex].content = newValue
+      if let rowIndex = self.rows.firstIndex(where: { $0.id == row.id }),
+        self.rows[rowIndex].cells[header.columnIndex].content != newValue
+      {
+        self.performUndoable("Edit Cell", coalescing: "cell-\(row.id)-\(header.id)") {
+          self.rows[rowIndex].cells[header.columnIndex].content = newValue
+        }
       }
     }
   }
@@ -215,10 +295,12 @@ class CSVViewModel: ObservableObject {
   /// Clear all cells in the block. Both ranges must lie within the table
   /// bounds.
   func clear(rowRange: ClosedRange<Int>, columnRange: ClosedRange<Int>) {
-    for rowIndex in rowRange {
-      for columnIndex in columnRange
-      where rows[rowIndex].cells.indices.contains(columnIndex) {
-        rows[rowIndex].cells[columnIndex].content = ""
+    performUndoable("Clear Cells") {
+      for rowIndex in rowRange {
+        for columnIndex in columnRange
+        where rows[rowIndex].cells.indices.contains(columnIndex) {
+          rows[rowIndex].cells[columnIndex].content = ""
+        }
       }
     }
   }
@@ -226,16 +308,18 @@ class CSVViewModel: ObservableObject {
   /// Paste delimited text with its top-left field at the given position,
   /// adding rows and columns as needed.
   func paste(_ text: String, atRow startRow: Int, column startColumn: Int) {
-    for (rowOffset, fields) in parseFields(text).enumerated() {
-      let rowIndex = startRow + rowOffset
-      while rows.count <= rowIndex { addRow() }
-      for (columnOffset, field) in fields.enumerated() {
-        let columnIndex = startColumn + columnOffset
-        while headers.count <= columnIndex { addColumn() }
-        while rows[rowIndex].cells.count <= columnIndex {
-          rows[rowIndex].cells.append(CSVCell(content: ""))
+    performUndoable("Paste") {
+      for (rowOffset, fields) in parseFields(text).enumerated() {
+        let rowIndex = startRow + rowOffset
+        while rows.count <= rowIndex { addRow() }
+        for (columnOffset, field) in fields.enumerated() {
+          let columnIndex = startColumn + columnOffset
+          while headers.count <= columnIndex { addColumn() }
+          while rows[rowIndex].cells.count <= columnIndex {
+            rows[rowIndex].cells.append(CSVCell(content: ""))
+          }
+          rows[rowIndex].cells[columnIndex].content = field
         }
-        rows[rowIndex].cells[columnIndex].content = field
       }
     }
   }

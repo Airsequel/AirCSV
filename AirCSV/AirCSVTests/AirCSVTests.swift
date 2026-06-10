@@ -234,4 +234,105 @@ final class AirCSVTests: XCTestCase {
         XCTAssertEqual(vm.rows.count, 1)
         XCTAssertEqual(vm.rows[0].cells[0].content, "5")
     }
+
+    @MainActor
+    func testUndoRedoDeleteRow() {
+        let vm = CSVViewModel()
+        let undoManager = UndoManager()
+        vm.undoManager = undoManager
+        vm.parseCSV(content: "A,B\n1,2\n3,4")
+        vm.delete(row: vm.rows[0], selection: [])
+        XCTAssertEqual(vm.rows.count, 1)
+        undoManager.undo()
+        XCTAssertEqual(vm.rows.map { $0.cells[0].content }, ["1", "3"])
+        undoManager.redo()
+        XCTAssertEqual(vm.rows.map { $0.cells[0].content }, ["3"])
+    }
+
+    @MainActor
+    func testUndoAddColumn() {
+        let vm = CSVViewModel()
+        let undoManager = UndoManager()
+        vm.undoManager = undoManager
+        vm.parseCSV(content: "A,B\n1,2")
+        vm.addColumn()
+        XCTAssertEqual(vm.headers.count, 3)
+        undoManager.undo()
+        XCTAssertEqual(vm.headers.map(\.name), ["A", "B"])
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["1", "2"])
+    }
+
+    @MainActor
+    func testUndoCellEditCoalescesKeystrokes() {
+        let vm = CSVViewModel()
+        let undoManager = UndoManager()
+        vm.undoManager = undoManager
+        vm.parseCSV(content: "A,B\n1,2")
+        let binding = vm.cellBinding(for: vm.rows[0], header: vm.headers[0])
+        binding.wrappedValue = "x"
+        binding.wrappedValue = "xy"
+        undoManager.undo()
+        XCTAssertEqual(vm.rows[0].cells[0].content, "1")
+    }
+
+    @MainActor
+    func testBreakUndoCoalescingSeparatesEditSessions() {
+        let vm = CSVViewModel()
+        let undoManager = UndoManager()
+        undoManager.groupsByEvent = false
+        vm.undoManager = undoManager
+        vm.parseCSV(content: "A,B\n1,2")
+        let binding = vm.cellBinding(for: vm.rows[0], header: vm.headers[0])
+        undoManager.beginUndoGrouping()
+        binding.wrappedValue = "x"
+        undoManager.endUndoGrouping()
+        vm.breakUndoCoalescing()
+        undoManager.beginUndoGrouping()
+        binding.wrappedValue = "xy"
+        undoManager.endUndoGrouping()
+        undoManager.undo()
+        XCTAssertEqual(vm.rows[0].cells[0].content, "x")
+        undoManager.undo()
+        XCTAssertEqual(vm.rows[0].cells[0].content, "1")
+    }
+
+    @MainActor
+    func testUndoHeaderRename() {
+        let vm = CSVViewModel()
+        let undoManager = UndoManager()
+        vm.undoManager = undoManager
+        vm.parseCSV(content: "A,B\n1,2")
+        vm.headerBinding(for: vm.headers[0]).wrappedValue = "Z"
+        XCTAssertEqual(vm.headers[0].name, "Z")
+        undoManager.undo()
+        XCTAssertEqual(vm.headers[0].name, "A")
+    }
+
+    @MainActor
+    func testUndoPasteRestoresTableSize() {
+        let vm = CSVViewModel()
+        let undoManager = UndoManager()
+        vm.undoManager = undoManager
+        vm.parseCSV(content: "A,B\n1,2")
+        vm.paste("x,y\nz,w", atRow: 1, column: 1)
+        XCTAssertEqual(vm.headers.count, 3)
+        XCTAssertEqual(vm.rows.count, 3)
+        undoManager.undo()
+        XCTAssertEqual(vm.headers.count, 2)
+        XCTAssertEqual(vm.rows.count, 1)
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["1", "2"])
+    }
+
+    @MainActor
+    func testParseCSVClearsUndoHistory() {
+        let vm = CSVViewModel()
+        let undoManager = UndoManager()
+        vm.undoManager = undoManager
+        vm.parseCSV(content: "A,B\n1,2")
+        vm.addRow()
+        vm.parseCSV(content: "C,D\n3,4")
+        undoManager.undo()
+        XCTAssertEqual(vm.headers.map(\.name), ["C", "D"])
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["3", "4"])
+    }
 }
