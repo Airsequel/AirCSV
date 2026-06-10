@@ -9,7 +9,9 @@ struct ContentView: View {
     CSVTableView(viewModel: viewModel, wrapContent: $wrapContent)
       .toolbar {
         CSVImportButton(viewModel: viewModel)
+          .labelStyle(.titleAndIcon)
         CSVExportButton(viewModel: viewModel)
+          .labelStyle(.titleAndIcon)
         Button {
           wrapContent.toggle()
         } label: {
@@ -18,6 +20,7 @@ struct ContentView: View {
             systemImage: wrapContent ? "arrow.right.to.line" : "arrow.turn.down.left"
           )
         }
+        .labelStyle(.titleAndIcon)
       }
   }
 }
