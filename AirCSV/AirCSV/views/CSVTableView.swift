@@ -64,6 +64,9 @@ import SwiftUI
     @State private var selectedRows: Set<CSVRow.ID> = []
     @State private var selectedColumns: Set<CSVHeader.ID> = []
     @State private var selectedCell: CellAddress?
+    /// Extent of a shift+click range selection; `selectedCell` is the
+    /// anchor. Nil while only a single cell is selected.
+    @State private var selectionEnd: CellAddress?
     @State private var editingCell: CellAddress?
     @FocusState private var focusedCell: CellAddress?
     @State private var columnWidths: [UUID: CGFloat] = [:]
@@ -111,6 +114,7 @@ import SwiftUI
       )
       editingCell = target
       selectedCell = target
+      selectionEnd = nil
       DispatchQueue.main.async { focusedCell = target }
     }
 
@@ -127,19 +131,45 @@ import SwiftUI
         rowID: viewModel.rows[targetRow].id,
         headerID: viewModel.headers[targetColumn].id
       )
+      selectionEnd = nil
       selectedRows = []
       selectedColumns = []
     }
 
-    /// Copy the selected cell, rows, or columns to the pasteboard. Returns
+    /// Row and column index bounds of the cell selection rectangle spanned
+    /// by the anchor cell and the shift+click extent, or nil when no cell
+    /// is selected.
+    func selectionRange() -> (rows: ClosedRange<Int>, columns: ClosedRange<Int>)? {
+      guard let anchor = selectedCell,
+        let anchorRow = viewModel.rows.firstIndex(where: { $0.id == anchor.rowID }),
+        let anchorColumn = viewModel.headers.firstIndex(where: { $0.id == anchor.headerID })
+      else { return nil }
+      guard let end = selectionEnd,
+        let endRow = viewModel.rows.firstIndex(where: { $0.id == end.rowID }),
+        let endColumn = viewModel.headers.firstIndex(where: { $0.id == end.headerID })
+      else { return (anchorRow...anchorRow, anchorColumn...anchorColumn) }
+      return (
+        min(anchorRow, endRow)...max(anchorRow, endRow),
+        min(anchorColumn, endColumn)...max(anchorColumn, endColumn)
+      )
+    }
+
+    /// Copy the selected cells, rows, or columns to the pasteboard. Returns
     /// false when nothing is selected.
     func copySelection() -> Bool {
       let content: String
-      if let cell = selectedCell {
-        guard let row = viewModel.rows.first(where: { $0.id == cell.rowID }),
-          let header = viewModel.headers.first(where: { $0.id == cell.headerID })
-        else { return false }
-        content = viewModel.cellBinding(for: row, header: header).wrappedValue
+      if let range = selectionRange() {
+        if range.rows.count == 1, range.columns.count == 1 {
+          // A single cell copies its raw content, without CSV escaping.
+          let cells = viewModel.rows[range.rows.lowerBound].cells
+          content =
+            cells.indices.contains(range.columns.lowerBound)
+            ? cells[range.columns.lowerBound].content
+            : ""
+        } else {
+          content = viewModel.copyContent(
+            rowRange: range.rows, columnRange: range.columns)
+        }
       } else if !selectedRows.isEmpty {
         content = viewModel.copyContent(rows: selectedRows)
       } else if !selectedColumns.isEmpty {
@@ -155,12 +185,8 @@ import SwiftUI
     /// Copy the selection, then clear its cells.
     func cutSelection() -> Bool {
       guard copySelection() else { return false }
-      if let cell = selectedCell {
-        if let row = viewModel.rows.first(where: { $0.id == cell.rowID }),
-          let header = viewModel.headers.first(where: { $0.id == cell.headerID })
-        {
-          viewModel.cellBinding(for: row, header: header).wrappedValue = ""
-        }
+      if let range = selectionRange() {
+        viewModel.clear(rowRange: range.rows, columnRange: range.columns)
       } else if !selectedRows.isEmpty {
         viewModel.clear(rows: selectedRows)
       } else if !selectedColumns.isEmpty {
@@ -169,16 +195,14 @@ import SwiftUI
       return true
     }
 
-    /// Paste the pasteboard starting at the selected cell, the first
-    /// selected row, or the first selected column. Returns false when
+    /// Paste the pasteboard starting at the top-left selected cell, the
+    /// first selected row, or the first selected column. Returns false when
     /// nothing is selected or the pasteboard has no text.
     func pasteSelection() -> Bool {
       guard let text = NSPasteboard.general.string(forType: .string) else { return false }
-      if let cell = selectedCell {
-        guard let rowIndex = viewModel.rows.firstIndex(where: { $0.id == cell.rowID }),
-          let columnIndex = viewModel.headers.firstIndex(where: { $0.id == cell.headerID })
-        else { return false }
-        viewModel.paste(text, atRow: rowIndex, column: columnIndex)
+      if let range = selectionRange() {
+        viewModel.paste(
+          text, atRow: range.rows.lowerBound, column: range.columns.lowerBound)
       } else if let rowIndex = viewModel.rows.firstIndex(where: { selectedRows.contains($0.id) }) {
         viewModel.paste(text, atRow: rowIndex, column: 0)
       } else if let columnIndex = viewModel.headers.firstIndex(where: {
@@ -217,6 +241,8 @@ import SwiftUI
     }
 
     var body: some View {
+      // Computed once per render; cells check membership by index.
+      let selection = selectionRange()
       GeometryReader { geometry in
         ScrollView([.horizontal, .vertical]) {
           LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
@@ -237,6 +263,7 @@ import SwiftUI
                       selectedRows = [row.id]
                       selectedColumns = []
                       selectedCell = nil
+                      selectionEnd = nil
                       editingCell = nil
                       focusedCell = nil
                     }
@@ -245,6 +272,7 @@ import SwiftUI
                         selectedRows = [row.id]
                         selectedColumns = []
                         selectedCell = nil
+                        selectionEnd = nil
                         editingCell = nil
                         focusedCell = nil
                         return [
@@ -286,7 +314,9 @@ import SwiftUI
                     .frame(width: columnWidth(for: header), alignment: .leading)
                     .frame(maxHeight: .infinity)
                     .background(
-                      selectedCell == address
+                      selection.map {
+                        $0.rows.contains(index) && $0.columns.contains(header.columnIndex)
+                      } == true
                         ? Color.accentColor.opacity(0.25)
                         : selectedColumns.contains(header.id)
                           ? Color.accentColor.opacity(0.15)
@@ -296,7 +326,22 @@ import SwiftUI
                     .contentShape(Rectangle())
                     .simultaneousGesture(
                       TapGesture().onEnded {
+                        // Shift+click extends the selection from the anchor
+                        // cell into a rectangular range.
+                        if let event = NSApp.currentEvent,
+                          event.modifierFlags.contains(.shift),
+                          selectedCell != nil,
+                          editingCell != address
+                        {
+                          selectionEnd = address
+                          selectedRows = []
+                          selectedColumns = []
+                          editingCell = nil
+                          focusedCell = nil
+                          return
+                        }
                         selectedCell = address
+                        selectionEnd = nil
                         selectedRows = []
                         selectedColumns = []
                         // Clicks inside the cell's own active editor (cursor
@@ -329,6 +374,7 @@ import SwiftUI
                       if editingCell != address {
                         RightClickMenu {
                           selectedCell = address
+                          selectionEnd = nil
                           selectedRows = []
                           selectedColumns = []
                           editingCell = nil
@@ -438,6 +484,7 @@ import SwiftUI
                         selectedColumns = [header.id]
                         selectedRows = []
                         selectedCell = nil
+                        selectionEnd = nil
                         editingCell = nil
                         focusedCell = nil
                       }
@@ -451,6 +498,7 @@ import SwiftUI
                         selectedColumns = [header.id]
                         selectedRows = []
                         selectedCell = nil
+                        selectionEnd = nil
                         editingCell = nil
                         focusedCell = nil
                         editingHeader = nil
@@ -573,6 +621,7 @@ import SwiftUI
             switch event.keyCode {
             case returnKey:
               editingCell = cell
+              selectionEnd = nil
               DispatchQueue.main.async { focusedCell = cell }
             case leftArrow: moveSelection(rowDelta: 0, columnDelta: -1)
             case rightArrow: moveSelection(rowDelta: 0, columnDelta: 1)

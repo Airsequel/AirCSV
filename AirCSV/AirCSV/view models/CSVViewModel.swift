@@ -205,6 +205,29 @@ class CSVViewModel: ObservableObject {
     }.joined(separator: "\n")
   }
 
+  /// The cell block serialized as CSV lines. Both ranges must lie within
+  /// the table bounds.
+  func copyContent(rowRange: ClosedRange<Int>, columnRange: ClosedRange<Int>) -> String {
+    rowRange.map { rowIndex in
+      columnRange.map { columnIndex in
+        rows[rowIndex].cells.indices.contains(columnIndex)
+          ? rows[rowIndex].cells[columnIndex].exportContent
+          : ""
+      }.joined(separator: ",")
+    }.joined(separator: "\n")
+  }
+
+  /// Clear all cells in the block. Both ranges must lie within the table
+  /// bounds.
+  func clear(rowRange: ClosedRange<Int>, columnRange: ClosedRange<Int>) {
+    for rowIndex in rowRange {
+      for columnIndex in columnRange
+      where rows[rowIndex].cells.indices.contains(columnIndex) {
+        rows[rowIndex].cells[columnIndex].content = ""
+      }
+    }
+  }
+
   /// Paste delimited text with its top-left field at the given position,
   /// adding rows and columns as needed.
   func paste(_ text: String, atRow startRow: Int, column startColumn: Int) {

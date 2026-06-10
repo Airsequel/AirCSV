@@ -162,6 +162,25 @@ final class AirCSVTests: XCTestCase {
     }
 
     @MainActor
+    func testCopyContentForCellRange() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B,C\n1,2,3\n4,\"with, comma\",6\n7,8,9")
+        XCTAssertEqual(
+            vm.copyContent(rowRange: 0...1, columnRange: 1...2),
+            "2,3\n\"with, comma\",6")
+    }
+
+    @MainActor
+    func testClearCellRange() {
+        let vm = CSVViewModel()
+        vm.parseCSV(content: "A,B,C\n1,2,3\n4,5,6\n7,8,9")
+        vm.clear(rowRange: 1...2, columnRange: 0...1)
+        XCTAssertEqual(vm.rows[0].cells.map(\.content), ["1", "2", "3"])
+        XCTAssertEqual(vm.rows[1].cells.map(\.content), ["", "", "6"])
+        XCTAssertEqual(vm.rows[2].cells.map(\.content), ["", "", "9"])
+    }
+
+    @MainActor
     func testPasteSingleField() {
         let vm = CSVViewModel()
         vm.parseCSV(content: "A,B\n1,2\n3,4")
