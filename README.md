@@ -1,74 +1,88 @@
 # AirCSV
-Shows how to make a macOS app that opens and edits CSV files. It is a  SwiftUI project using TableView, fileExporter, fileImporter, and ReferenceFileDocument. 
 
-<img width="679" alt="SwiftUI TableView with CSV data" src="images/csvtable.jpeg">
+**A fast, native CSV editor for macOS.**
 
-## SwiftUI Table
-MacOS 15 introduces dynamic table columns. This allows to show the imported csv data:
+Open CSV files straight from Finder, edit them like a spreadsheet,
+and save them back as exactly what they are: plain text.
+No import wizards, no type guessing, no mangled data.
 
+<img width="1000" alt="AirCSV editing a CSV file" src="screenshots/2026-06-10t1402_csv_file.png">
+
+
+## Why AirCSV?
+
+- **Native and lightweight** —
+    A real Mac app built with SwiftUI.
+    Starts instantly, feels at home on macOS.
+- **Your data stays plain text** —
+    What you see is what's in the file.
+    Values are never reinterpreted, reformatted, or silently converted.
+    Exports use proper CSV quoting and end with a trailing newline.
+- **Document-based** —
+    Double-click any `.csv` file in Finder and start editing.
+
+
+## Features
+
+### Edit like a spreadsheet
+
+- Click to select a cell, double-click to edit it
+- Navigate with the arrow keys, start editing with `Return`
+- `Tab` / `Shift+Tab` move the edit session left and right,
+  `Return` moves down
+- `Shift+Return` inserts a line break inside a cell
+- `Shift+Click` selects a rectangular cell range
+- Click a row number or column header to select the whole row or column
+
+### A clipboard that understands tables
+
+- `Cmd+C` / `Cmd+X` / `Cmd+V` work on cells, ranges, rows, and columns
+- Pasting expands the table automatically when the data doesn't fit
+- Pasted text can be comma-, tab-, or semicolon-separated —
+  so data from Excel, Numbers, and other tools just works
+
+### Reorganize with drag & drop
+
+- Drag rows by their row number, columns by their header
+- An insertion line shows exactly where the dragged row or column will land
+
+### Undo everything
+
+- `Cmd+Z` / `Shift+Cmd+Z` undo and redo every change —
+  cell edits, pastes, deletions, and reorderings
+
+### Columns under control
+
+- Drag a column edge to resize it,
+  double-click the edge to fit the content
+- Wrap or clip long cell content with one toolbar click
+
+### And more
+
+- Right-click context menus to copy, clear, or delete rows and columns
+- Open URLs in cells directly from the context menu
+- Row numbers, pinned header row, and a monospaced font
+  that keeps data aligned
+
+
+## Installation
+
+Build and install the app with [Xcode](https://developer.apple.com/xcode/)
+installed:
+
+```sh
+git clone https://github.com/Airsequel/AirCSV
+cd AirCSV
+make install
 ```
-   Table(of: CSVRow.self,
-         selection: $selection,
-         columnCustomization: $viewModel.tableCustomization) {
-            TableColumnForEach(viewModel.headers) { header in
-                TableColumn(header.name) { row in
-                    TextField("Cell",
-                              text: viewModel.cellBinding(for: row, header: header))
-                }
-                .customizationID(header.id.uuidString)
-            }
-        } rows: {
-            ForEach(viewModel.rows) { row in
-                TableRow(row)
-                    .contextMenu {
-                        Button("Delete") {
-                            withAnimation(.bouncy(duration: 2)) {
-                                viewModel.delete(row: row,
-                                                 selection: selection)
-                            }
-                        }
-                    }
-            }
-        }
+
+This builds a universal binary and copies `AirCSV.app` to `/Applications`.
+
+
+## Development
+
+```sh
+make help    # List all make targets
+make dev     # Build and launch the app with an example CSV
+make test    # Run the test suite
 ```
-
-
-The table rows are selectable and have a context menu to delete the selected rows:
-
-<img width="679" alt="Edit Data in SwiftUI TableView" src="images/tableedit.jpeg">
-
-## Import CSV Files with SwiftUI
-
-You can define what file types you want to allow. The following uses "commaSeparatedText" which corresponds to CSV files:
-
-```
-        .fileImporter(isPresented: $isPresented,
-                      allowedContentTypes: [UTType.commaSeparatedText]) { result in
-            viewModel.handleFileImport(for: result)
-        }
-```
-<img width="879" alt="SwiftUI File importer with CSV files" src="images/fileimporter.jpeg">
-
-## Document-Based app
-
-The project is defined to use a document type for CSV files. This allows to open the app from Finder:
-
-<img width="679" alt="Finder app open with dialog" src="images/openwith.jpeg">
-
-You can get more functionality with DocumentGroup:
-```
-@main
-struct AirCSVApp: App {
-    var body: some Scene {
-        DocumentGroup(viewing: CSVViewModel.self) { configuration in
-            ContentView(viewModel: configuration.document)
-        }
-    }
-}
-```
-
-This includes "File" commands like save, open and move:
-
-
-<img alt="SwiftUI TableView with CSV data" src="images/documentapp.jpeg">
-
