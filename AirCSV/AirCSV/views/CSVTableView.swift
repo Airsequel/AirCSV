@@ -443,15 +443,33 @@ struct CSVTableView: View {
             Button {
               viewModel.addRow()
             } label: {
+              // The strip spans at least the window so it stays clickable
+              // under the window-centered "+". A hidden "+" fixes the
+              // strip's height; the visible one is overlaid and kept at the
+              // window's horizontal center.
+              let stripWidth = max(tableWidth, geometry.size.width)
               Image(systemName: "plus")
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .frame(width: tableWidth)
+                .hidden()
+                .frame(width: stripWidth)
                 .background(
                   hoveringAddRow
                     ? Color.accentColor.opacity(0.25)
                     : Color.white
                 )
+                .overlay {
+                  // The glyph rides with the strip vertically (it lives in
+                  // the scrolling content), but `visualEffect` counters the
+                  // horizontal scroll so it stays centered on the window.
+                  // The effect is render-synced, so it never lags or sticks.
+                  Image(systemName: "plus")
+                    .visualEffect { content, proxy in
+                      content.offset(
+                        x: geometry.size.width / 2
+                          - proxy.frame(in: .named("viewport")).midX)
+                    }
+                }
                 // A bare Divider on an Image base renders vertical; the
                 // VStack forces the horizontal orientation.
                 .overlay(alignment: .bottom) { VStack(spacing: 0) { Divider() } }
@@ -636,6 +654,9 @@ struct CSVTableView: View {
           alignment: .topLeading
         )
       }
+      // Anchor a coordinate space to the (non-scrolling) viewport so the
+      // add-row "+" can measure its horizontal position against the window.
+      .coordinateSpace(name: "viewport")
     }
     .onAppear {
       sizeAllColumnsToFit()
