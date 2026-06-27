@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct CSVImportButton: View {
 
-  @ObservedObject var viewModel: CSVViewModel
+  @ObservedObject var document: CSVDocument
 
   @State private var isPresented: Bool = false
 
@@ -17,12 +17,12 @@ struct CSVImportButton: View {
       isPresented: $isPresented,
       allowedContentTypes: [UTType.commaSeparatedText]
     ) { result in
-      viewModel.handleFileImport(for: result)
+      document.handleFileImport(for: result)
     }
 
   }
 }
 
 #Preview {
-  CSVImportButton(viewModel: CSVViewModel())
+  CSVImportButton(document: CSVDocument())
 }

@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-extension CSVViewModel: ReferenceFileDocument {
+extension CSVDocument: ReferenceFileDocument {
 
   static let readableContentTypes: [UTType] = [.commaSeparatedText]
 
@@ -15,7 +15,7 @@ extension CSVViewModel: ReferenceFileDocument {
 
 }
 
-extension CSVViewModel {
+extension CSVDocument {
   func exportContent() -> String {
     let headerRow = headers.map { $0.name }.joined(separator: ",")
     let dataRows = rows.map { exportContent(for: $0) }

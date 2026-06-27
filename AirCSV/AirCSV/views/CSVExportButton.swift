@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct CSVExportButton: View {
 
-  @ObservedObject var viewModel: CSVViewModel
+  @ObservedObject var document: CSVDocument
   @State private var isPresented: Bool = false
 
   var body: some View {
@@ -12,11 +12,11 @@ struct CSVExportButton: View {
     } label: {
       Label("Export CSV", systemImage: "square.and.arrow.up")
     }
-    .disabled(viewModel.content.isEmpty)
+    .disabled(document.content.isEmpty)
 
     .fileExporter(
       isPresented: $isPresented,
-      document: viewModel,
+      document: document,
       contentType: UTType.commaSeparatedText
     ) { result in
       print("result \(result)")
@@ -25,6 +25,6 @@ struct CSVExportButton: View {
 }
 
 #Preview {
-  CSVExportButton(viewModel: CSVViewModel.preview)
+  CSVExportButton(document: CSVDocument.preview)
     .frame(width: 300, height: 100)
 }

@@ -6,17 +6,58 @@ struct CellAddress: Hashable {
   let headerID: CSVHeader.ID
 }
 
+/// The grid's selection and active cell-edit session. The selection kinds
+/// (cell, cell range, rows, columns) are mutually exclusive: selecting one
+/// clears the others. The view's `focusedCell` — a `@FocusState`, which a
+/// value type can't hold — mirrors `editingCell`.
+struct TableSelection: Equatable {
+  /// Anchor of a cell selection.
+  var cell: CellAddress?
+  /// Far corner of a shift+click range; `cell` is the anchor. Nil while
+  /// only a single cell is selected.
+  var rangeEnd: CellAddress?
+  var rows: Set<CSVRow.ID> = []
+  var columns: Set<CSVHeader.ID> = []
+  /// The cell whose field editor is open, if any.
+  var editingCell: CellAddress?
+
+  /// Select a single cell, ending any other selection or edit session.
+  mutating func select(cell address: CellAddress) {
+    self = TableSelection(cell: address)
+  }
+
+  /// Extend the cell selection into a rectangle ending at `address`.
+  mutating func extend(to address: CellAddress) {
+    rangeEnd = address
+    rows = []
+    columns = []
+    editingCell = nil
+  }
+
+  mutating func select(row id: CSVRow.ID) {
+    self = TableSelection(rows: [id])
+  }
+
+  mutating func select(column id: CSVHeader.ID) {
+    self = TableSelection(columns: [id])
+  }
+
+  /// Open the field editor on a cell, selecting it.
+  mutating func beginEditing(_ address: CellAddress) {
+    self = TableSelection(cell: address, editingCell: address)
+  }
+
+  /// Close the field editor, keeping the cell selected.
+  mutating func endEditing() {
+    editingCell = nil
+  }
+}
+
 struct CSVTableView: View {
 
-  @ObservedObject var viewModel: CSVViewModel
+  @ObservedObject var document: CSVDocument
   @Binding var wrapContent: Bool
-  @State private var selectedRows: Set<CSVRow.ID> = []
-  @State private var selectedColumns: Set<CSVHeader.ID> = []
-  @State private var selectedCell: CellAddress?
-  /// Extent of a shift+click range selection; `selectedCell` is the
-  /// anchor. Nil while only a single cell is selected.
-  @State private var selectionEnd: CellAddress?
-  @State private var editingCell: CellAddress?
+  @State private var selection = TableSelection()
   @FocusState private var focusedCell: CellAddress?
   @State private var columnWidths: [UUID: CGFloat] = [:]
   @State private var dragStartWidths: [UUID: CGFloat] = [:]
@@ -34,75 +75,71 @@ struct CSVTableView: View {
   @State private var rowHeights: [CSVRow.ID: CGFloat] = [:]
 
   func columnWidth(for header: CSVHeader) -> CGFloat {
-    columnWidths[header.id] ?? viewModel.idealWidth(for: header)
+    columnWidths[header.id] ?? document.idealWidth(for: header)
   }
 
   /// Width of a data row: row number column plus all data columns.
   var tableWidth: CGFloat {
-    viewModel.headers.reduce(viewModel.rowNumberColumnWidth) { $0 + columnWidth(for: $1) }
+    document.headers.reduce(document.rowNumberColumnWidth) { $0 + columnWidth(for: $1) }
   }
 
   func sizeAllColumnsToFit() {
-    for header in viewModel.headers {
-      columnWidths[header.id] = viewModel.fitWidth(for: header)
+    for header in document.headers {
+      columnWidths[header.id] = document.fitWidth(for: header)
     }
   }
 
   /// Move the edit session to the cell offset by the given deltas, or end
   /// editing when that would leave the table.
   func moveEditing(rowDelta: Int, columnDelta: Int) {
-    guard let current = editingCell,
-      let rowIndex = viewModel.rows.firstIndex(where: { $0.id == current.rowID }),
-      let columnIndex = viewModel.headers.firstIndex(where: { $0.id == current.headerID })
+    guard let current = selection.editingCell,
+      let rowIndex = document.rows.firstIndex(where: { $0.id == current.rowID }),
+      let columnIndex = document.headers.firstIndex(where: { $0.id == current.headerID })
     else { return }
     let targetRow = rowIndex + rowDelta
     let targetColumn = columnIndex + columnDelta
-    guard viewModel.rows.indices.contains(targetRow),
-      viewModel.headers.indices.contains(targetColumn)
+    guard document.rows.indices.contains(targetRow),
+      document.headers.indices.contains(targetColumn)
     else {
-      editingCell = nil
+      selection.endEditing()
       focusedCell = nil
       return
     }
     let target = CellAddress(
-      rowID: viewModel.rows[targetRow].id,
-      headerID: viewModel.headers[targetColumn].id
+      rowID: document.rows[targetRow].id,
+      headerID: document.headers[targetColumn].id
     )
-    editingCell = target
-    selectedCell = target
-    selectionEnd = nil
+    selection.beginEditing(target)
     DispatchQueue.main.async { focusedCell = target }
   }
 
   /// Move the selection to the cell offset by the given deltas, clamped to
   /// the table bounds.
   func moveSelection(rowDelta: Int, columnDelta: Int) {
-    guard let current = selectedCell,
-      let rowIndex = viewModel.rows.firstIndex(where: { $0.id == current.rowID }),
-      let columnIndex = viewModel.headers.firstIndex(where: { $0.id == current.headerID })
+    guard let current = selection.cell,
+      let rowIndex = document.rows.firstIndex(where: { $0.id == current.rowID }),
+      let columnIndex = document.headers.firstIndex(where: { $0.id == current.headerID })
     else { return }
-    let targetRow = min(max(rowIndex + rowDelta, 0), viewModel.rows.count - 1)
-    let targetColumn = min(max(columnIndex + columnDelta, 0), viewModel.headers.count - 1)
-    selectedCell = CellAddress(
-      rowID: viewModel.rows[targetRow].id,
-      headerID: viewModel.headers[targetColumn].id
-    )
-    selectionEnd = nil
-    selectedRows = []
-    selectedColumns = []
+    let targetRow = min(max(rowIndex + rowDelta, 0), document.rows.count - 1)
+    let targetColumn = min(max(columnIndex + columnDelta, 0), document.headers.count - 1)
+    selection.select(
+      cell: CellAddress(
+        rowID: document.rows[targetRow].id,
+        headerID: document.headers[targetColumn].id
+      ))
   }
 
   /// Row and column index bounds of the cell selection rectangle spanned
   /// by the anchor cell and the shift+click extent, or nil when no cell
   /// is selected.
   func selectionRange() -> (rows: ClosedRange<Int>, columns: ClosedRange<Int>)? {
-    guard let anchor = selectedCell,
-      let anchorRow = viewModel.rows.firstIndex(where: { $0.id == anchor.rowID }),
-      let anchorColumn = viewModel.headers.firstIndex(where: { $0.id == anchor.headerID })
+    guard let anchor = selection.cell,
+      let anchorRow = document.rows.firstIndex(where: { $0.id == anchor.rowID }),
+      let anchorColumn = document.headers.firstIndex(where: { $0.id == anchor.headerID })
     else { return nil }
-    guard let end = selectionEnd,
-      let endRow = viewModel.rows.firstIndex(where: { $0.id == end.rowID }),
-      let endColumn = viewModel.headers.firstIndex(where: { $0.id == end.headerID })
+    guard let end = selection.rangeEnd,
+      let endRow = document.rows.firstIndex(where: { $0.id == end.rowID }),
+      let endColumn = document.headers.firstIndex(where: { $0.id == end.headerID })
     else { return (anchorRow...anchorRow, anchorColumn...anchorColumn) }
     return (
       min(anchorRow, endRow)...max(anchorRow, endRow),
@@ -117,19 +154,19 @@ struct CSVTableView: View {
     if let range = selectionRange() {
       if range.rows.count == 1, range.columns.count == 1 {
         // A single cell copies its raw content, without CSV escaping.
-        let cells = viewModel.rows[range.rows.lowerBound].cells
+        let cells = document.rows[range.rows.lowerBound].cells
         content =
           cells.indices.contains(range.columns.lowerBound)
           ? cells[range.columns.lowerBound].content
           : ""
       } else {
-        content = viewModel.copyContent(
+        content = document.copyContent(
           rowRange: range.rows, columnRange: range.columns)
       }
-    } else if !selectedRows.isEmpty {
-      content = viewModel.copyContent(rows: selectedRows)
-    } else if !selectedColumns.isEmpty {
-      content = viewModel.copyContent(columns: selectedColumns)
+    } else if !selection.rows.isEmpty {
+      content = document.copyContent(rows: selection.rows)
+    } else if !selection.columns.isEmpty {
+      content = document.copyContent(columns: selection.columns)
     } else {
       return false
     }
@@ -142,11 +179,11 @@ struct CSVTableView: View {
   func cutSelection() -> Bool {
     guard copySelection() else { return false }
     if let range = selectionRange() {
-      viewModel.clear(rowRange: range.rows, columnRange: range.columns)
-    } else if !selectedRows.isEmpty {
-      viewModel.clear(rows: selectedRows)
-    } else if !selectedColumns.isEmpty {
-      viewModel.clear(columns: selectedColumns)
+      document.clear(rowRange: range.rows, columnRange: range.columns)
+    } else if !selection.rows.isEmpty {
+      document.clear(rows: selection.rows)
+    } else if !selection.columns.isEmpty {
+      document.clear(columns: selection.columns)
     }
     return true
   }
@@ -157,14 +194,14 @@ struct CSVTableView: View {
   func pasteSelection() -> Bool {
     guard let text = NSPasteboard.general.string(forType: .string) else { return false }
     if let range = selectionRange() {
-      viewModel.paste(
+      document.paste(
         text, atRow: range.rows.lowerBound, column: range.columns.lowerBound)
-    } else if let rowIndex = viewModel.rows.firstIndex(where: { selectedRows.contains($0.id) }) {
-      viewModel.paste(text, atRow: rowIndex, column: 0)
-    } else if let columnIndex = viewModel.headers.firstIndex(where: {
-      selectedColumns.contains($0.id)
+    } else if let rowIndex = document.rows.firstIndex(where: { selection.rows.contains($0.id) }) {
+      document.paste(text, atRow: rowIndex, column: 0)
+    } else if let columnIndex = document.headers.firstIndex(where: {
+      selection.columns.contains($0.id)
     }) {
-      viewModel.paste(text, atRow: 0, column: columnIndex)
+      document.paste(text, atRow: 0, column: columnIndex)
     } else {
       return false
     }
@@ -202,7 +239,7 @@ struct CSVTableView: View {
   /// jumping when the cursor crosses the edge between them.
   func indicatedRowGap() -> Int? {
     guard let indicator = rowDropIndicator,
-      let index = viewModel.rows.firstIndex(where: { $0.id == indicator.rowID })
+      let index = document.rows.firstIndex(where: { $0.id == indicator.rowID })
     else { return nil }
     return indicator.insertAfter ? index + 1 : index
   }
@@ -211,38 +248,34 @@ struct CSVTableView: View {
   /// points at, or nil. See `indicatedRowGap`.
   func indicatedColumnGap() -> Int? {
     guard let indicator = columnDropIndicator,
-      let index = viewModel.headers.firstIndex(where: { $0.id == indicator.headerID })
+      let index = document.headers.firstIndex(where: { $0.id == indicator.headerID })
     else { return nil }
     return indicator.insertAfter ? index + 1 : index
   }
 
   var body: some View {
     // Computed once per render; cells check membership by index.
-    let selection = selectionRange()
+    let selectionRect = selectionRange()
     let rowGap = indicatedRowGap()
     let columnGap = indicatedColumnGap()
     GeometryReader { geometry in
       ScrollView([.horizontal, .vertical]) {
         LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
           Section {
-            ForEach(Array(viewModel.rows.enumerated()), id: \.element.id) { index, row in
+            ForEach(Array(document.rows.enumerated()), id: \.element.id) { index, row in
               HStack(spacing: 0) {
                 Text("\(index + 1)")
                   .foregroundStyle(.secondary)
                   .font(.system(.body, design: .monospaced))
                   .padding(.horizontal, 8)
                   .padding(.vertical, 6)
-                  .frame(width: viewModel.rowNumberColumnWidth, alignment: .trailing)
+                  .frame(width: document.rowNumberColumnWidth, alignment: .trailing)
                   .frame(maxHeight: .infinity)
                   .background(Color(nsColor: .windowBackgroundColor))
                   .overlay(alignment: .trailing) { Divider() }
                   .contentShape(Rectangle())
                   .onTapGesture {
-                    selectedRows = [row.id]
-                    selectedColumns = []
-                    selectedCell = nil
-                    selectionEnd = nil
-                    editingCell = nil
+                    selection.select(row: row.id)
                     focusedCell = nil
                   }
                   .onDrag {
@@ -252,41 +285,37 @@ struct CSVTableView: View {
                   }
                   .overlay(
                     RightClickMenu {
-                      selectedRows = [row.id]
-                      selectedColumns = []
-                      selectedCell = nil
-                      selectionEnd = nil
-                      editingCell = nil
+                      selection.select(row: row.id)
                       focusedCell = nil
                       return [
                         MenuAction(title: "Copy Row") {
                           NSPasteboard.general.clearContents()
                           NSPasteboard.general.setString(
-                            viewModel.exportContent(for: row), forType: .string)
+                            document.exportContent(for: row), forType: .string)
                         },
                         MenuAction(title: "Clear Row") {
-                          viewModel.clear(row: row, selection: [row.id])
+                          document.clear(row: row, selection: [row.id])
                         },
                         MenuAction(title: "Delete Row") {
-                          viewModel.delete(row: row, selection: [row.id])
+                          document.delete(row: row, selection: [row.id])
                         },
                       ]
                     }
                   )
-                ForEach(viewModel.headers) { header in
+                ForEach(document.headers) { header in
                   let address = CellAddress(rowID: row.id, headerID: header.id)
                   Group {
-                    if editingCell == address {
+                    if selection.editingCell == address {
                       TextField(
-                        "", text: viewModel.cellBinding(for: row, header: header),
+                        "", text: document.cellBinding(for: row, header: header),
                         axis: .vertical
                       )
                       .textFieldStyle(.plain)
                       .focused($focusedCell, equals: address)
                       .onSubmit { moveEditing(rowDelta: 1, columnDelta: 0) }
-                      .onExitCommand { editingCell = nil }
+                      .onExitCommand { selection.endEditing() }
                     } else {
-                      Text(viewModel.cellBinding(for: row, header: header).wrappedValue)
+                      Text(document.cellBinding(for: row, header: header).wrappedValue)
                         .lineLimit(wrapContent ? nil : 1)
                         .truncationMode(.tail)
                     }
@@ -297,11 +326,11 @@ struct CSVTableView: View {
                   .frame(width: columnWidth(for: header), alignment: .leading)
                   .frame(maxHeight: .infinity)
                   .background(
-                    selection.map {
+                    selectionRect.map {
                       $0.rows.contains(index) && $0.columns.contains(header.columnIndex)
                     } == true
                       ? Color.accentColor.opacity(0.25)
-                      : selectedColumns.contains(header.id)
+                      : selection.columns.contains(header.id)
                         ? Color.accentColor.opacity(0.15)
                         : Color.clear
                   )
@@ -314,8 +343,8 @@ struct CSVTableView: View {
                     }
                   }
                   .overlay(alignment: .trailing) {
-                    if header.columnIndex == viewModel.headers.count - 1,
-                      columnGap == viewModel.headers.count
+                    if header.columnIndex == document.headers.count - 1,
+                      columnGap == document.headers.count
                     {
                       Rectangle().fill(Color.accentColor).frame(width: 2)
                     }
@@ -323,34 +352,27 @@ struct CSVTableView: View {
                   .contentShape(Rectangle())
                   .simultaneousGesture(
                     TapGesture().onEnded {
+                      let event = NSApp.currentEvent
                       // Shift+click extends the selection from the anchor
                       // cell into a rectangular range.
-                      if let event = NSApp.currentEvent,
-                        event.modifierFlags.contains(.shift),
-                        selectedCell != nil,
-                        editingCell != address
+                      if event?.modifierFlags.contains(.shift) == true,
+                        selection.cell != nil,
+                        selection.editingCell != address
                       {
-                        selectionEnd = address
-                        selectedRows = []
-                        selectedColumns = []
-                        editingCell = nil
+                        selection.extend(to: address)
                         focusedCell = nil
                         return
                       }
-                      selectedCell = address
-                      selectionEnd = nil
-                      selectedRows = []
-                      selectedColumns = []
                       // Clicks inside the cell's own active editor (cursor
                       // placement, word selection) are the editor's business.
-                      guard editingCell != address else { return }
+                      guard selection.editingCell != address else { return }
                       // Detect double clicks via the AppKit event instead of
                       // TapGesture(count: 2): the recognizer's click counter
                       // resets when the first click ends another cell's edit
                       // session and the view tree rebuilds.
-                      if let event = NSApp.currentEvent, event.clickCount >= 2 {
-                        editingCell = address
-                        let clickLocation = event.locationInWindow
+                      if (event?.clickCount ?? 0) >= 2 {
+                        selection.beginEditing(address)
+                        let clickLocation = event?.locationInWindow
                         DispatchQueue.main.async {
                           focusedCell = address
                           DispatchQueue.main.async { placeCursor(at: clickLocation) }
@@ -360,7 +382,7 @@ struct CSVTableView: View {
                         // session. Done here explicitly because the field
                         // editor keeps first responder when a gesture-only
                         // view is clicked, so no focus change would fire.
-                        editingCell = nil
+                        selection.select(cell: address)
                         focusedCell = nil
                       }
                     }
@@ -368,23 +390,19 @@ struct CSVTableView: View {
                   .overlay {
                     // No catcher while editing, so the field editor keeps
                     // its own clicks and text context menu.
-                    if editingCell != address {
+                    if selection.editingCell != address {
                       RightClickMenu {
-                        selectedCell = address
-                        selectionEnd = nil
-                        selectedRows = []
-                        selectedColumns = []
-                        editingCell = nil
+                        selection.select(cell: address)
                         focusedCell = nil
                         let content =
-                          viewModel.cellBinding(for: row, header: header).wrappedValue
+                          document.cellBinding(for: row, header: header).wrappedValue
                         var actions = [
                           MenuAction(title: "Copy Cell") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(content, forType: .string)
                           },
                           MenuAction(title: "Clear Cell") {
-                            viewModel.cellBinding(for: row, header: header).wrappedValue = ""
+                            document.cellBinding(for: row, header: header).wrappedValue = ""
                           },
                         ]
                         if let url = cellURL(content) {
@@ -403,7 +421,7 @@ struct CSVTableView: View {
               // that height so backgrounds and dividers span the full row.
               .fixedSize(horizontal: false, vertical: true)
               .background(
-                selectedRows.contains(row.id)
+                selection.rows.contains(row.id)
                   ? Color.accentColor.opacity(0.15)
                   : Color(
                     NSColor.alternatingContentBackgroundColors[index.isMultiple(of: 2) ? 0 : 1])
@@ -417,7 +435,7 @@ struct CSVTableView: View {
                 }
               }
               .overlay(alignment: .bottom) {
-                if index == viewModel.rows.count - 1, rowGap == viewModel.rows.count {
+                if index == document.rows.count - 1, rowGap == document.rows.count {
                   Rectangle().fill(Color.accentColor).frame(height: 2)
                 }
               }
@@ -437,11 +455,11 @@ struct CSVTableView: View {
                 of: [.text],
                 delegate: RowReorderDropDelegate(
                   rowID: row.id, rowHeight: rowHeights[row.id] ?? 0,
-                  viewModel: viewModel,
+                  document: document,
                   draggedRow: $draggedRow, indicator: $rowDropIndicator))
             }
             Button {
-              viewModel.addRow()
+              document.addRow()
             } label: {
               // The strip spans at least the window so it stays clickable
               // under the window-centered "+". A hidden "+" fixes the
@@ -486,7 +504,7 @@ struct CSVTableView: View {
             .onDrop(
               of: [.text],
               delegate: RowEndDropDelegate(
-                viewModel: viewModel,
+                document: document,
                 draggedRow: $draggedRow, indicator: $rowDropIndicator))
           } header: {
             HStack(spacing: 0) {
@@ -494,13 +512,13 @@ struct CSVTableView: View {
                 .fontWeight(.semibold)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .frame(width: viewModel.rowNumberColumnWidth, alignment: .trailing)
+                .frame(width: document.rowNumberColumnWidth, alignment: .trailing)
                 .background(Color(nsColor: .windowBackgroundColor))
                 .overlay(alignment: .trailing) { Divider() }
-              ForEach(viewModel.headers) { header in
+              ForEach(document.headers) { header in
                 Group {
                   if editingHeader == header.id {
-                    TextField("", text: viewModel.headerBinding(for: header))
+                    TextField("", text: document.headerBinding(for: header))
                       .textFieldStyle(.plain)
                       .focused($focusedHeader, equals: header.id)
                       .onSubmit { editingHeader = nil }
@@ -514,7 +532,7 @@ struct CSVTableView: View {
                 .padding(.vertical, 6)
                 .frame(width: columnWidth(for: header), alignment: .leading)
                 .background(
-                  selectedColumns.contains(header.id)
+                  selection.columns.contains(header.id)
                     ? Color.accentColor.opacity(0.15)
                     : Color.clear
                 )
@@ -532,11 +550,7 @@ struct CSVTableView: View {
                         DispatchQueue.main.async { placeCursor(at: clickLocation) }
                       }
                     } else {
-                      selectedColumns = [header.id]
-                      selectedRows = []
-                      selectedCell = nil
-                      selectionEnd = nil
-                      editingCell = nil
+                      selection.select(column: header.id)
                       focusedCell = nil
                     }
                   }
@@ -551,11 +565,7 @@ struct CSVTableView: View {
                   // its own clicks and text context menu.
                   if editingHeader != header.id {
                     RightClickMenu {
-                      selectedColumns = [header.id]
-                      selectedRows = []
-                      selectedCell = nil
-                      selectionEnd = nil
-                      editingCell = nil
+                      selection.select(column: header.id)
                       focusedCell = nil
                       editingHeader = nil
                       focusedHeader = nil
@@ -563,14 +573,14 @@ struct CSVTableView: View {
                         MenuAction(title: "Copy Column") {
                           NSPasteboard.general.clearContents()
                           NSPasteboard.general.setString(
-                            viewModel.exportContent(for: header), forType: .string)
+                            document.exportContent(for: header), forType: .string)
                         },
                         MenuAction(title: "Clear Column") {
-                          viewModel.clear(column: header)
+                          document.clear(column: header)
                         },
                         MenuAction(title: "Delete Column") {
-                          viewModel.delete(column: header)
-                          selectedColumns = []
+                          document.delete(column: header)
+                          selection.columns = []
                         },
                       ]
                     }
@@ -579,7 +589,7 @@ struct CSVTableView: View {
                 .overlay(alignment: .trailing) {
                   ResizeHandle()
                     .onTapGesture(count: 2) {
-                      columnWidths[header.id] = viewModel.fitWidth(for: header)
+                      columnWidths[header.id] = document.fitWidth(for: header)
                     }
                     .gesture(
                       DragGesture(coordinateSpace: .global)
@@ -601,8 +611,8 @@ struct CSVTableView: View {
                   }
                 }
                 .overlay(alignment: .trailing) {
-                  if header.columnIndex == viewModel.headers.count - 1,
-                    columnGap == viewModel.headers.count
+                  if header.columnIndex == document.headers.count - 1,
+                    columnGap == document.headers.count
                   {
                     Rectangle().fill(Color.accentColor).frame(width: 2)
                   }
@@ -611,11 +621,11 @@ struct CSVTableView: View {
                   of: [.text],
                   delegate: ColumnReorderDropDelegate(
                     headerID: header.id, columnWidth: columnWidth(for: header),
-                    viewModel: viewModel,
+                    document: document,
                     draggedColumn: $draggedColumn, indicator: $columnDropIndicator))
               }
               Button {
-                viewModel.addColumn()
+                document.addColumn()
               } label: {
                 Image(systemName: "plus")
                   .padding(.horizontal, 8)
@@ -640,7 +650,7 @@ struct CSVTableView: View {
               .onDrop(
                 of: [.text],
                 delegate: ColumnEndDropDelegate(
-                  viewModel: viewModel,
+                  document: document,
                   draggedColumn: $draggedColumn, indicator: $columnDropIndicator))
             }
             .background(.white)
@@ -672,7 +682,7 @@ struct CSVTableView: View {
         let rightArrow: UInt16 = 124
         let downArrow: UInt16 = 125
         let upArrow: UInt16 = 126
-        if editingCell != nil {
+        if selection.editingCell != nil {
           if event.keyCode == returnKey,
             event.modifierFlags.contains(.shift),
             let editor = NSApp.keyWindow?.firstResponder as? NSTextView
@@ -704,19 +714,18 @@ struct CSVTableView: View {
           case "v": if pasteSelection() { return nil }
           case "z", "Z":
             if event.modifierFlags.contains(.shift) {
-              viewModel.undoManager?.redo()
+              document.undoManager?.redo()
             } else {
-              viewModel.undoManager?.undo()
+              document.undoManager?.undo()
             }
             return nil
           default: break
           }
         }
-        if let cell = selectedCell, editingHeader == nil {
+        if let cell = selection.cell, editingHeader == nil {
           switch event.keyCode {
           case returnKey:
-            editingCell = cell
-            selectionEnd = nil
+            selection.beginEditing(cell)
             DispatchQueue.main.async { focusedCell = cell }
           case leftArrow: moveSelection(rowDelta: 0, columnDelta: -1)
           case rightArrow: moveSelection(rowDelta: 0, columnDelta: 1)
@@ -736,20 +745,22 @@ struct CSVTableView: View {
     // Only size columns without a stored width so adding a column doesn't
     // discard manual resizes. A newly imported file gets fresh header IDs,
     // so all its columns are sized.
-    .onChange(of: viewModel.headers) {
-      for header in viewModel.headers where columnWidths[header.id] == nil {
-        columnWidths[header.id] = viewModel.fitWidth(for: header)
+    .onChange(of: document.headers) {
+      for header in document.headers where columnWidths[header.id] == nil {
+        columnWidths[header.id] = document.fitWidth(for: header)
       }
     }
     // A new edit session is a new undo step, even for the same cell.
-    .onChange(of: editingCell) { viewModel.breakUndoCoalescing() }
-    .onChange(of: editingHeader) { viewModel.breakUndoCoalescing() }
+    .onChange(of: selection.editingCell) { document.breakUndoCoalescing() }
+    .onChange(of: editingHeader) { document.breakUndoCoalescing() }
     .onChange(of: focusedCell) { oldValue, newValue in
       // Only end editing when the *editing* cell lost focus. Comparing
       // against the old value avoids killing a freshly started edit session
       // when the previous cell's defocus event arrives late.
-      if editingCell != nil && oldValue == editingCell && newValue != editingCell {
-        editingCell = nil
+      if selection.editingCell != nil && oldValue == selection.editingCell
+        && newValue != selection.editingCell
+      {
+        selection.endEditing()
       }
     }
     .onChange(of: focusedHeader) { oldValue, newValue in
@@ -786,7 +797,7 @@ struct ColumnDropIndicator: Equatable {
 private struct RowReorderDropDelegate: DropDelegate {
   let rowID: CSVRow.ID
   let rowHeight: CGFloat
-  let viewModel: CSVViewModel
+  let document: CSVDocument
   @Binding var draggedRow: CSVRow.ID?
   @Binding var indicator: RowDropIndicator?
 
@@ -799,8 +810,8 @@ private struct RowReorderDropDelegate: DropDelegate {
   /// for the hovered gap, or nil when no row drag is active.
   private func moveIndices(_ info: DropInfo) -> (from: Int, to: Int)? {
     guard let dragged = draggedRow,
-      let from = viewModel.rows.firstIndex(where: { $0.id == dragged }),
-      let target = viewModel.rows.firstIndex(where: { $0.id == rowID })
+      let from = document.rows.firstIndex(where: { $0.id == dragged }),
+      let target = document.rows.firstIndex(where: { $0.id == rowID })
     else { return nil }
     var to = insertAfter(info) ? target + 1 : target
     if from < to { to -= 1 }
@@ -832,7 +843,7 @@ private struct RowReorderDropDelegate: DropDelegate {
       indicator = nil
     }
     guard let (from, to) = moveIndices(info), from != to else { return false }
-    withAnimation(moveAnimation) { viewModel.move(rowAt: from, to: to) }
+    withAnimation(moveAnimation) { document.move(rowAt: from, to: to) }
     return true
   }
 }
@@ -842,7 +853,7 @@ private struct RowReorderDropDelegate: DropDelegate {
 private struct ColumnReorderDropDelegate: DropDelegate {
   let headerID: CSVHeader.ID
   let columnWidth: CGFloat
-  let viewModel: CSVViewModel
+  let document: CSVDocument
   @Binding var draggedColumn: CSVHeader.ID?
   @Binding var indicator: ColumnDropIndicator?
 
@@ -855,8 +866,8 @@ private struct ColumnReorderDropDelegate: DropDelegate {
   /// at for the hovered gap, or nil when no column drag is active.
   private func moveIndices(_ info: DropInfo) -> (from: Int, to: Int)? {
     guard let dragged = draggedColumn,
-      let from = viewModel.headers.firstIndex(where: { $0.id == dragged }),
-      let target = viewModel.headers.firstIndex(where: { $0.id == headerID })
+      let from = document.headers.firstIndex(where: { $0.id == dragged }),
+      let target = document.headers.firstIndex(where: { $0.id == headerID })
     else { return nil }
     var to = insertAfter(info) ? target + 1 : target
     if from < to { to -= 1 }
@@ -888,14 +899,14 @@ private struct ColumnReorderDropDelegate: DropDelegate {
       indicator = nil
     }
     guard let (from, to) = moveIndices(info), from != to else { return false }
-    withAnimation(moveAnimation) { viewModel.move(columnAt: from, to: to) }
+    withAnimation(moveAnimation) { document.move(columnAt: from, to: to) }
     return true
   }
 }
 
 /// Drop target on the add-row strip: moves the dragged row to the end.
 private struct RowEndDropDelegate: DropDelegate {
-  let viewModel: CSVViewModel
+  let document: CSVDocument
   @Binding var draggedRow: CSVRow.ID?
   @Binding var indicator: RowDropIndicator?
 
@@ -904,7 +915,7 @@ private struct RowEndDropDelegate: DropDelegate {
   }
 
   func dropUpdated(info: DropInfo) -> DropProposal? {
-    guard draggedRow != nil, let last = viewModel.rows.last else { return nil }
+    guard draggedRow != nil, let last = document.rows.last else { return nil }
     // No line when the dragged row already is the last row.
     indicator =
       last.id == draggedRow
@@ -914,7 +925,7 @@ private struct RowEndDropDelegate: DropDelegate {
   }
 
   func dropExited(info: DropInfo) {
-    if indicator == viewModel.rows.last.map({ RowDropIndicator(rowID: $0.id, insertAfter: true) }) {
+    if indicator == document.rows.last.map({ RowDropIndicator(rowID: $0.id, insertAfter: true) }) {
       indicator = nil
     }
   }
@@ -925,10 +936,10 @@ private struct RowEndDropDelegate: DropDelegate {
       indicator = nil
     }
     guard let dragged = draggedRow,
-      let from = viewModel.rows.firstIndex(where: { $0.id == dragged })
+      let from = document.rows.firstIndex(where: { $0.id == dragged })
     else { return false }
     withAnimation(moveAnimation) {
-      viewModel.move(rowAt: from, to: viewModel.rows.count - 1)
+      document.move(rowAt: from, to: document.rows.count - 1)
     }
     return true
   }
@@ -937,7 +948,7 @@ private struct RowEndDropDelegate: DropDelegate {
 /// Drop target on the add-column strip: moves the dragged column to the
 /// end.
 private struct ColumnEndDropDelegate: DropDelegate {
-  let viewModel: CSVViewModel
+  let document: CSVDocument
   @Binding var draggedColumn: CSVHeader.ID?
   @Binding var indicator: ColumnDropIndicator?
 
@@ -946,7 +957,7 @@ private struct ColumnEndDropDelegate: DropDelegate {
   }
 
   func dropUpdated(info: DropInfo) -> DropProposal? {
-    guard draggedColumn != nil, let last = viewModel.headers.last else { return nil }
+    guard draggedColumn != nil, let last = document.headers.last else { return nil }
     // No line when the dragged column already is the last column.
     indicator =
       last.id == draggedColumn
@@ -957,7 +968,7 @@ private struct ColumnEndDropDelegate: DropDelegate {
 
   func dropExited(info: DropInfo) {
     if indicator
-      == viewModel.headers.last.map({ ColumnDropIndicator(headerID: $0.id, insertAfter: true) })
+      == document.headers.last.map({ ColumnDropIndicator(headerID: $0.id, insertAfter: true) })
     {
       indicator = nil
     }
@@ -969,10 +980,10 @@ private struct ColumnEndDropDelegate: DropDelegate {
       indicator = nil
     }
     guard let dragged = draggedColumn,
-      let from = viewModel.headers.firstIndex(where: { $0.id == dragged })
+      let from = document.headers.firstIndex(where: { $0.id == dragged })
     else { return false }
     withAnimation(moveAnimation) {
-      viewModel.move(columnAt: from, to: viewModel.headers.count - 1)
+      document.move(columnAt: from, to: document.headers.count - 1)
     }
     return true
   }
@@ -1079,5 +1090,5 @@ private struct ResizeHandle: View {
 }
 
 #Preview {
-  CSVTableView(viewModel: CSVViewModel.preview, wrapContent: .constant(false))
+  CSVTableView(document: CSVDocument.preview, wrapContent: .constant(false))
 }

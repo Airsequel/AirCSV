@@ -1,7 +1,7 @@
 import SwiftCSV
 import SwiftUI
 
-class CSVViewModel: ObservableObject {
+class CSVDocument: ObservableObject {
 
   @Published var url: URL?
   @Published var content: String = ""
@@ -368,8 +368,8 @@ class CSVViewModel: ObservableObject {
 
   //MARK: - Preview
 
-  static var preview: CSVViewModel {
-    let vm = CSVViewModel()
+  static var preview: CSVDocument {
+    let vm = CSVDocument()
     vm.content = sampleCSV
     vm.parseCSV(content: sampleCSV)
     return vm

@@ -2,18 +2,18 @@ import SwiftUI
 
 struct ContentView: View {
 
-  @ObservedObject var viewModel: CSVViewModel
+  @ObservedObject var document: CSVDocument
   @Environment(\.undoManager) private var undoManager
   @State private var wrapContent: Bool = true
 
   var body: some View {
-    CSVTableView(viewModel: viewModel, wrapContent: $wrapContent)
-      .onAppear { viewModel.undoManager = undoManager }
-      .onChange(of: undoManager) { viewModel.undoManager = undoManager }
+    CSVTableView(document: document, wrapContent: $wrapContent)
+      .onAppear { document.undoManager = undoManager }
+      .onChange(of: undoManager) { document.undoManager = undoManager }
       .toolbar {
-        CSVImportButton(viewModel: viewModel)
+        CSVImportButton(document: document)
           .labelStyle(.titleAndIcon)
-        CSVExportButton(viewModel: viewModel)
+        CSVExportButton(document: document)
           .labelStyle(.titleAndIcon)
         Button {
           wrapContent.toggle()
@@ -29,5 +29,5 @@ struct ContentView: View {
 }
 
 #Preview {
-  ContentView(viewModel: CSVViewModel.preview)
+  ContentView(document: CSVDocument.preview)
 }
