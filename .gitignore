@@ -16,5 +16,8 @@ build/
 # macOS
 .DS_Store
 
+# Generated test data (recreate with `make example-20k`)
+csvs/example-20k.csv
+
 # CocoaPods (not used, but just in case)
 Pods/

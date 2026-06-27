@@ -32,6 +32,10 @@ dev: build
 	"$(APP)/Contents/MacOS/AirCSV" csvs/example.csv
 
 
+csvs/example-20k.csv: scripts/generate_example_csv.swift
+	swift $< $@ 20000
+
+
 .PHONY: format
 format:
 	@which swift-format > /dev/null 2>&1 \
