@@ -13,13 +13,14 @@ struct CSVExportButton: View {
       Label("Export CSV", systemImage: "square.and.arrow.up")
     }
     .disabled(document.content.isEmpty)
-
     .fileExporter(
       isPresented: $isPresented,
       document: document,
       contentType: UTType.commaSeparatedText
     ) { result in
-      print("result \(result)")
+      if case .failure(let error) = result {
+        print("Export failed: \(error)")
+      }
     }
   }
 }

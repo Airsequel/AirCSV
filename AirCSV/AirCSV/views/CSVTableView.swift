@@ -74,8 +74,17 @@ struct CSVTableView: View {
   /// wrapped cells make row heights vary.
   @State private var rowHeights: [CSVRow.ID: CGFloat] = [:]
 
+  /// Range bounds of the cell selection rectangle, recomputed once per
+  /// render and threaded into the cells, which test membership by index.
+  typealias SelectionRect = (rows: ClosedRange<Int>, columns: ClosedRange<Int>)
+
+  /// Background fill for the chrome around the grid (header row, add-row
+  /// and add-column strips). Matches the row-number column and adapts to
+  /// light/dark mode.
+  private let chromeBackground = Color(nsColor: .windowBackgroundColor)
+
   func columnWidth(for header: CSVHeader) -> CGFloat {
-    columnWidths[header.id] ?? document.idealWidth(for: header)
+    columnWidths[header.id] ?? document.fitWidth(for: header)
   }
 
   /// Width of a data row: row number column plus all data columns.
@@ -132,7 +141,7 @@ struct CSVTableView: View {
   /// Row and column index bounds of the cell selection rectangle spanned
   /// by the anchor cell and the shift+click extent, or nil when no cell
   /// is selected.
-  func selectionRange() -> (rows: ClosedRange<Int>, columns: ClosedRange<Int>)? {
+  func selectionRange() -> SelectionRect? {
     guard let anchor = selection.cell,
       let anchorRow = document.rows.firstIndex(where: { $0.id == anchor.rowID }),
       let anchorColumn = document.headers.firstIndex(where: { $0.id == anchor.headerID })
@@ -253,6 +262,27 @@ struct CSVTableView: View {
     return indicator.insertAfter ? index + 1 : index
   }
 
+  // MARK: - Insertion lines
+
+  /// The accent-colored line shown left of the column at `index` when a
+  /// dragged column would drop into the gap there.
+  private func columnInsertionLine(at index: Int, gap: Int?) -> some View {
+    Color.clear
+      .overlay(alignment: .leading) {
+        if gap == index {
+          Rectangle().fill(Color.accentColor).frame(width: 2)
+        }
+      }
+      .overlay(alignment: .trailing) {
+        if index == document.headers.count - 1, gap == document.headers.count {
+          Rectangle().fill(Color.accentColor).frame(width: 2)
+        }
+      }
+      // Purely decorative — never intercept clicks meant for the cell or
+      // the resize handle it sits above.
+      .allowsHitTesting(false)
+  }
+
   var body: some View {
     // Computed once per render; cells check membership by index.
     let selectionRect = selectionRange()
@@ -263,399 +293,13 @@ struct CSVTableView: View {
         LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
           Section {
             ForEach(Array(document.rows.enumerated()), id: \.element.id) { index, row in
-              HStack(spacing: 0) {
-                Text("\(index + 1)")
-                  .foregroundStyle(.secondary)
-                  .font(.system(.body, design: .monospaced))
-                  .padding(.horizontal, 8)
-                  .padding(.vertical, 6)
-                  .frame(width: document.rowNumberColumnWidth, alignment: .trailing)
-                  .frame(maxHeight: .infinity)
-                  .background(Color(nsColor: .windowBackgroundColor))
-                  .overlay(alignment: .trailing) { Divider() }
-                  .contentShape(Rectangle())
-                  .onTapGesture {
-                    selection.select(row: row.id)
-                    focusedCell = nil
-                  }
-                  .onDrag {
-                    draggedRow = row.id
-                    draggedColumn = nil
-                    return NSItemProvider(object: row.id.uuidString as NSString)
-                  }
-                  .overlay(
-                    RightClickMenu {
-                      selection.select(row: row.id)
-                      focusedCell = nil
-                      return [
-                        MenuAction(title: "Copy Row") {
-                          NSPasteboard.general.clearContents()
-                          NSPasteboard.general.setString(
-                            document.exportContent(for: row), forType: .string)
-                        },
-                        MenuAction(title: "Clear Row") {
-                          document.clear(row: row, selection: [row.id])
-                        },
-                        MenuAction(title: "Delete Row") {
-                          document.delete(row: row, selection: [row.id])
-                        },
-                      ]
-                    }
-                  )
-                ForEach(document.headers) { header in
-                  let address = CellAddress(rowID: row.id, headerID: header.id)
-                  Group {
-                    if selection.editingCell == address {
-                      TextField(
-                        "", text: document.cellBinding(for: row, header: header),
-                        axis: .vertical
-                      )
-                      .textFieldStyle(.plain)
-                      .focused($focusedCell, equals: address)
-                      .onSubmit { moveEditing(rowDelta: 1, columnDelta: 0) }
-                      .onExitCommand { selection.endEditing() }
-                    } else {
-                      Text(document.cellBinding(for: row, header: header).wrappedValue)
-                        .lineLimit(wrapContent ? nil : 1)
-                        .truncationMode(.tail)
-                    }
-                  }
-                  .font(.system(.body, design: .monospaced))
-                  .padding(.horizontal, 8)
-                  .padding(.vertical, 6)
-                  .frame(width: columnWidth(for: header), alignment: .leading)
-                  .frame(maxHeight: .infinity)
-                  .background(
-                    selectionRect.map {
-                      $0.rows.contains(index) && $0.columns.contains(header.columnIndex)
-                    } == true
-                      ? Color.accentColor.opacity(0.25)
-                      : selection.columns.contains(header.id)
-                        ? Color.accentColor.opacity(0.15)
-                        : Color.clear
-                  )
-                  .overlay(alignment: .trailing) { Divider() }
-                  // Insertion line for the gap left of this column — or,
-                  // on the last column, also for the gap right of it.
-                  .overlay(alignment: .leading) {
-                    if columnGap == header.columnIndex {
-                      Rectangle().fill(Color.accentColor).frame(width: 2)
-                    }
-                  }
-                  .overlay(alignment: .trailing) {
-                    if header.columnIndex == document.headers.count - 1,
-                      columnGap == document.headers.count
-                    {
-                      Rectangle().fill(Color.accentColor).frame(width: 2)
-                    }
-                  }
-                  .contentShape(Rectangle())
-                  .simultaneousGesture(
-                    TapGesture().onEnded {
-                      let event = NSApp.currentEvent
-                      // Shift+click extends the selection from the anchor
-                      // cell into a rectangular range.
-                      if event?.modifierFlags.contains(.shift) == true,
-                        selection.cell != nil,
-                        selection.editingCell != address
-                      {
-                        selection.extend(to: address)
-                        focusedCell = nil
-                        return
-                      }
-                      // Clicks inside the cell's own active editor (cursor
-                      // placement, word selection) are the editor's business.
-                      guard selection.editingCell != address else { return }
-                      // Detect double clicks via the AppKit event instead of
-                      // TapGesture(count: 2): the recognizer's click counter
-                      // resets when the first click ends another cell's edit
-                      // session and the view tree rebuilds.
-                      if (event?.clickCount ?? 0) >= 2 {
-                        selection.beginEditing(address)
-                        let clickLocation = event?.locationInWindow
-                        DispatchQueue.main.async {
-                          focusedCell = address
-                          DispatchQueue.main.async { placeCursor(at: clickLocation) }
-                        }
-                      } else {
-                        // Single click on another cell ends any active edit
-                        // session. Done here explicitly because the field
-                        // editor keeps first responder when a gesture-only
-                        // view is clicked, so no focus change would fire.
-                        selection.select(cell: address)
-                        focusedCell = nil
-                      }
-                    }
-                  )
-                  .overlay {
-                    // No catcher while editing, so the field editor keeps
-                    // its own clicks and text context menu.
-                    if selection.editingCell != address {
-                      RightClickMenu {
-                        selection.select(cell: address)
-                        focusedCell = nil
-                        let content =
-                          document.cellBinding(for: row, header: header).wrappedValue
-                        var actions = [
-                          MenuAction(title: "Copy Cell") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(content, forType: .string)
-                          },
-                          MenuAction(title: "Clear Cell") {
-                            document.cellBinding(for: row, header: header).wrappedValue = ""
-                          },
-                        ]
-                        if let url = cellURL(content) {
-                          actions.append(
-                            MenuAction(title: "Open URL") {
-                              NSWorkspace.shared.open(url)
-                            })
-                        }
-                        return actions
-                      }
-                    }
-                  }
-                }
-              }
-              // Size the row to its tallest cell, then let every cell fill
-              // that height so backgrounds and dividers span the full row.
-              .fixedSize(horizontal: false, vertical: true)
-              .background(
-                selection.rows.contains(row.id)
-                  ? Color.accentColor.opacity(0.15)
-                  : Color(
-                    NSColor.alternatingContentBackgroundColors[index.isMultiple(of: 2) ? 0 : 1])
-              )
-              .overlay(alignment: .bottom) { Divider() }
-              // Insertion line for the gap above this row — or, on the
-              // last row, also for the gap below it.
-              .overlay(alignment: .top) {
-                if rowGap == index {
-                  Rectangle().fill(Color.accentColor).frame(height: 2)
-                }
-              }
-              .overlay(alignment: .bottom) {
-                if index == document.rows.count - 1, rowGap == document.rows.count {
-                  Rectangle().fill(Color.accentColor).frame(height: 2)
-                }
-              }
-              .contentShape(Rectangle())
-              // Records the row height for the drop delegate's midpoint
-              // test without affecting layout or hit testing.
-              .background(
-                GeometryReader { geometry in
-                  Color.clear
-                    .onAppear { rowHeights[row.id] = geometry.size.height }
-                    .onChange(of: geometry.size.height) {
-                      rowHeights[row.id] = geometry.size.height
-                    }
-                }
-              )
-              .onDrop(
-                of: [.text],
-                delegate: RowReorderDropDelegate(
-                  rowID: row.id, rowHeight: rowHeights[row.id] ?? 0,
-                  document: document,
-                  draggedRow: $draggedRow, indicator: $rowDropIndicator))
+              dataRow(
+                index: index, row: row,
+                selectionRect: selectionRect, rowGap: rowGap, columnGap: columnGap)
             }
-            Button {
-              document.addRow()
-            } label: {
-              // The strip spans at least the window so it stays clickable
-              // under the window-centered "+". A hidden "+" fixes the
-              // strip's height; the visible one is overlaid and kept at the
-              // window's horizontal center.
-              let stripWidth = max(tableWidth, geometry.size.width)
-              Image(systemName: "plus")
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .hidden()
-                .frame(width: stripWidth)
-                .background(
-                  hoveringAddRow
-                    ? Color.accentColor.opacity(0.25)
-                    : Color.white
-                )
-                .overlay {
-                  // The glyph rides with the strip vertically (it lives in
-                  // the scrolling content), but `visualEffect` counters the
-                  // horizontal scroll so it stays centered on the window.
-                  // The effect is render-synced, so it never lags or sticks.
-                  Image(systemName: "plus")
-                    .visualEffect { content, proxy in
-                      content.offset(
-                        x: geometry.size.width / 2
-                          - proxy.frame(in: .named("viewport")).midX)
-                    }
-                }
-                // A bare Divider on an Image base renders vertical; the
-                // VStack forces the horizontal orientation.
-                .overlay(alignment: .bottom) { VStack(spacing: 0) { Divider() } }
-                .overlay(alignment: .trailing) { Divider() }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .focusEffectDisabled()
-            .foregroundStyle(.secondary)
-            .onHover { hoveringAddRow = $0 }
-            .help("Add row")
-            // The strip below the last row accepts row drags, so the gap
-            // after the last row has a drop area below its line too.
-            .onDrop(
-              of: [.text],
-              delegate: RowEndDropDelegate(
-                document: document,
-                draggedRow: $draggedRow, indicator: $rowDropIndicator))
+            addRowStrip(viewportWidth: geometry.size.width)
           } header: {
-            HStack(spacing: 0) {
-              Text("#")
-                .fontWeight(.semibold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .frame(width: document.rowNumberColumnWidth, alignment: .trailing)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .overlay(alignment: .trailing) { Divider() }
-              ForEach(document.headers) { header in
-                Group {
-                  if editingHeader == header.id {
-                    TextField("", text: document.headerBinding(for: header))
-                      .textFieldStyle(.plain)
-                      .focused($focusedHeader, equals: header.id)
-                      .onSubmit { editingHeader = nil }
-                      .onExitCommand { editingHeader = nil }
-                  } else {
-                    Text(header.name)
-                  }
-                }
-                .fontWeight(.semibold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .frame(width: columnWidth(for: header), alignment: .leading)
-                .background(
-                  selection.columns.contains(header.id)
-                    ? Color.accentColor.opacity(0.15)
-                    : Color.clear
-                )
-                .contentShape(Rectangle())
-                // Plain gesture (not simultaneous) so the resize handle's
-                // own double-click keeps priority within its strip.
-                .gesture(
-                  TapGesture().onEnded {
-                    guard editingHeader != header.id else { return }
-                    if let event = NSApp.currentEvent, event.clickCount >= 2 {
-                      editingHeader = header.id
-                      let clickLocation = event.locationInWindow
-                      DispatchQueue.main.async {
-                        focusedHeader = header.id
-                        DispatchQueue.main.async { placeCursor(at: clickLocation) }
-                      }
-                    } else {
-                      selection.select(column: header.id)
-                      focusedCell = nil
-                    }
-                  }
-                )
-                .onDrag {
-                  draggedColumn = header.id
-                  draggedRow = nil
-                  return NSItemProvider(object: header.id.uuidString as NSString)
-                }
-                .overlay {
-                  // No catcher while renaming, so the field editor keeps
-                  // its own clicks and text context menu.
-                  if editingHeader != header.id {
-                    RightClickMenu {
-                      selection.select(column: header.id)
-                      focusedCell = nil
-                      editingHeader = nil
-                      focusedHeader = nil
-                      return [
-                        MenuAction(title: "Copy Column") {
-                          NSPasteboard.general.clearContents()
-                          NSPasteboard.general.setString(
-                            document.exportContent(for: header), forType: .string)
-                        },
-                        MenuAction(title: "Clear Column") {
-                          document.clear(column: header)
-                        },
-                        MenuAction(title: "Delete Column") {
-                          document.delete(column: header)
-                          selection.columns = []
-                        },
-                      ]
-                    }
-                  }
-                }
-                .overlay(alignment: .trailing) {
-                  ResizeHandle()
-                    .onTapGesture(count: 2) {
-                      columnWidths[header.id] = document.fitWidth(for: header)
-                    }
-                    .gesture(
-                      DragGesture(coordinateSpace: .global)
-                        .onChanged { value in
-                          if dragStartWidths[header.id] == nil {
-                            dragStartWidths[header.id] = columnWidth(for: header)
-                          }
-                          columnWidths[header.id] = max(
-                            50, (dragStartWidths[header.id] ?? 50) + value.translation.width)
-                        }
-                        .onEnded { _ in dragStartWidths[header.id] = nil }
-                    )
-                }
-                // Insertion line for the gap left of this column — or,
-                // on the last column, also for the gap right of it.
-                .overlay(alignment: .leading) {
-                  if columnGap == header.columnIndex {
-                    Rectangle().fill(Color.accentColor).frame(width: 2)
-                  }
-                }
-                .overlay(alignment: .trailing) {
-                  if header.columnIndex == document.headers.count - 1,
-                    columnGap == document.headers.count
-                  {
-                    Rectangle().fill(Color.accentColor).frame(width: 2)
-                  }
-                }
-                .onDrop(
-                  of: [.text],
-                  delegate: ColumnReorderDropDelegate(
-                    headerID: header.id, columnWidth: columnWidth(for: header),
-                    document: document,
-                    draggedColumn: $draggedColumn, indicator: $columnDropIndicator))
-              }
-              Button {
-                document.addColumn()
-              } label: {
-                Image(systemName: "plus")
-                  .padding(.horizontal, 8)
-                  .padding(.vertical, 6)
-                  .frame(maxHeight: .infinity)
-                  .background(
-                    hoveringAddColumn
-                      ? Color.accentColor.opacity(0.25)
-                      : Color.white
-                  )
-                  .overlay(alignment: .trailing) { Divider() }
-                  .contentShape(Rectangle())
-              }
-              .buttonStyle(.plain)
-              .focusEffectDisabled()
-              .foregroundStyle(.secondary)
-              .onHover { hoveringAddColumn = $0 }
-              .help("Add column")
-              // The strip right of the last header accepts column drags,
-              // so the gap after the last column has a drop area right of
-              // its line too.
-              .onDrop(
-                of: [.text],
-                delegate: ColumnEndDropDelegate(
-                  document: document,
-                  draggedColumn: $draggedColumn, indicator: $columnDropIndicator))
-            }
-            .background(.white)
-            .overlay(alignment: .top) { Divider() }
-            .overlay(alignment: .bottom) { Divider() }
+            tableHeader(columnGap: columnGap)
           }
         }
         .frame(
@@ -668,76 +312,7 @@ struct CSVTableView: View {
       // add-row "+" can measure its horizontal position against the window.
       .coordinateSpace(name: "viewport")
     }
-    .onAppear {
-      sizeAllColumnsToFit()
-      // While editing a cell: Shift+Return inserts a line break (a plain
-      // Return submits via onSubmit and moves down), Tab moves the edit
-      // session to the cell on the right, Shift+Tab to the left.
-      // While a cell is merely selected, Return starts editing it and the
-      // arrow keys move the selection.
-      keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-        let returnKey: UInt16 = 36
-        let tabKey: UInt16 = 48
-        let leftArrow: UInt16 = 123
-        let rightArrow: UInt16 = 124
-        let downArrow: UInt16 = 125
-        let upArrow: UInt16 = 126
-        if selection.editingCell != nil {
-          if event.keyCode == returnKey,
-            event.modifierFlags.contains(.shift),
-            let editor = NSApp.keyWindow?.firstResponder as? NSTextView
-          {
-            editor.insertNewlineIgnoringFieldEditor(nil)
-            return nil
-          }
-          if event.keyCode == tabKey {
-            moveEditing(
-              rowDelta: 0,
-              columnDelta: event.modifierFlags.contains(.shift) ? -1 : 1
-            )
-            return nil
-          }
-          return event
-        }
-        // Cmd+C/X/V act on the selected cell, rows, or columns; Cmd+Z and
-        // Shift+Cmd+Z undo and redo. While editing, the field editor
-        // handles them (returned above).
-        if editingHeader == nil,
-          event.modifierFlags.contains(.command),
-          !event.modifierFlags.contains(.option),
-          !event.modifierFlags.contains(.control),
-          let key = event.charactersIgnoringModifiers
-        {
-          switch key {
-          case "c": if copySelection() { return nil }
-          case "x": if cutSelection() { return nil }
-          case "v": if pasteSelection() { return nil }
-          case "z", "Z":
-            if event.modifierFlags.contains(.shift) {
-              document.undoManager?.redo()
-            } else {
-              document.undoManager?.undo()
-            }
-            return nil
-          default: break
-          }
-        }
-        if let cell = selection.cell, editingHeader == nil {
-          switch event.keyCode {
-          case returnKey:
-            selection.beginEditing(cell)
-            DispatchQueue.main.async { focusedCell = cell }
-          case leftArrow: moveSelection(rowDelta: 0, columnDelta: -1)
-          case rightArrow: moveSelection(rowDelta: 0, columnDelta: 1)
-          case downArrow: moveSelection(rowDelta: 1, columnDelta: 0)
-          case upArrow: moveSelection(rowDelta: -1, columnDelta: 0)
-          default: return event
-          }
-          return nil
-        }
-        return event
-      }
-    }
+    .onAppear { installKeyMonitor() }
     .onDisappear {
       if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
       keyMonitor = nil
@@ -767,6 +342,511 @@ struct CSVTableView: View {
       if editingHeader != nil && oldValue == editingHeader && newValue != editingHeader {
         editingHeader = nil
       }
+    }
+  }
+
+  // MARK: - Data rows
+
+  /// A full data row: the row-number cell, one cell per column, the row's
+  /// selection background, drop indicators, height tracking, and the
+  /// reorder drop target.
+  @ViewBuilder
+  private func dataRow(
+    index: Int, row: CSVRow,
+    selectionRect: SelectionRect?, rowGap: Int?, columnGap: Int?
+  ) -> some View {
+    HStack(spacing: 0) {
+      rowNumberCell(index: index, row: row)
+      ForEach(document.headers) { header in
+        dataCell(
+          index: index, row: row, header: header,
+          selectionRect: selectionRect, columnGap: columnGap)
+      }
+    }
+    // Size the row to its tallest cell, then let every cell fill
+    // that height so backgrounds and dividers span the full row.
+    .fixedSize(horizontal: false, vertical: true)
+    .background(
+      selection.rows.contains(row.id)
+        ? Color.accentColor.opacity(0.15)
+        : Color(
+          NSColor.alternatingContentBackgroundColors[index.isMultiple(of: 2) ? 0 : 1])
+    )
+    .overlay(alignment: .bottom) { Divider() }
+    // Insertion line for the gap above this row — or, on the
+    // last row, also for the gap below it.
+    .overlay(alignment: .top) {
+      if rowGap == index {
+        Rectangle().fill(Color.accentColor).frame(height: 2)
+      }
+    }
+    .overlay(alignment: .bottom) {
+      if index == document.rows.count - 1, rowGap == document.rows.count {
+        Rectangle().fill(Color.accentColor).frame(height: 2)
+      }
+    }
+    .contentShape(Rectangle())
+    // Records the row height for the drop delegate's midpoint
+    // test without affecting layout or hit testing.
+    .background(
+      GeometryReader { geometry in
+        Color.clear
+          .onAppear { rowHeights[row.id] = geometry.size.height }
+          .onChange(of: geometry.size.height) {
+            rowHeights[row.id] = geometry.size.height
+          }
+      }
+    )
+    .onDrop(
+      of: [.text],
+      delegate: RowReorderDropDelegate(
+        rowID: row.id, rowHeight: rowHeights[row.id] ?? 0,
+        document: document,
+        draggedRow: $draggedRow, indicator: $rowDropIndicator))
+  }
+
+  /// The leading row-number cell: selects the row, starts row drags, and
+  /// hosts the row context menu.
+  @ViewBuilder
+  private func rowNumberCell(index: Int, row: CSVRow) -> some View {
+    Text("\(index + 1)")
+      .foregroundStyle(.secondary)
+      .font(.system(.body, design: .monospaced))
+      .padding(.horizontal, 8)
+      .padding(.vertical, 6)
+      .frame(width: document.rowNumberColumnWidth, alignment: .trailing)
+      .frame(maxHeight: .infinity)
+      .background(chromeBackground)
+      .overlay(alignment: .trailing) { Divider() }
+      .contentShape(Rectangle())
+      .onTapGesture {
+        selection.select(row: row.id)
+        focusedCell = nil
+      }
+      .onDrag {
+        draggedRow = row.id
+        draggedColumn = nil
+        return NSItemProvider(object: row.id.uuidString as NSString)
+      }
+      .overlay(
+        RightClickMenu {
+          selection.select(row: row.id)
+          focusedCell = nil
+          return [
+            MenuAction(title: "Copy Row") {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(
+                document.exportContent(for: row), forType: .string)
+            },
+            MenuAction(title: "Clear Row") {
+              document.clear(row: row, selection: [row.id])
+            },
+            MenuAction(title: "Delete Row") {
+              document.delete(row: row, selection: [row.id])
+            },
+          ]
+        }
+      )
+  }
+
+  /// A single data cell: shows the value, or a field editor while editing.
+  /// Handles cell selection, shift+click range extension, double-click to
+  /// edit, and the cell context menu.
+  @ViewBuilder
+  private func dataCell(
+    index: Int, row: CSVRow, header: CSVHeader,
+    selectionRect: SelectionRect?, columnGap: Int?
+  ) -> some View {
+    let address = CellAddress(rowID: row.id, headerID: header.id)
+    Group {
+      if selection.editingCell == address {
+        TextField(
+          "", text: document.cellBinding(for: row, header: header),
+          axis: .vertical
+        )
+        .textFieldStyle(.plain)
+        .focused($focusedCell, equals: address)
+        .onSubmit { moveEditing(rowDelta: 1, columnDelta: 0) }
+        .onExitCommand { selection.endEditing() }
+      } else {
+        Text(document.cellBinding(for: row, header: header).wrappedValue)
+          .lineLimit(wrapContent ? nil : 1)
+          .truncationMode(.tail)
+      }
+    }
+    .font(.system(.body, design: .monospaced))
+    .padding(.horizontal, 8)
+    .padding(.vertical, 6)
+    .frame(width: columnWidth(for: header), alignment: .leading)
+    .frame(maxHeight: .infinity)
+    .background(cellBackground(index: index, header: header, selectionRect: selectionRect))
+    .overlay(alignment: .trailing) { Divider() }
+    .overlay { columnInsertionLine(at: header.columnIndex, gap: columnGap) }
+    .contentShape(Rectangle())
+    .simultaneousGesture(
+      TapGesture().onEnded { handleCellTap(address) }
+    )
+    .overlay {
+      // No catcher while editing, so the field editor keeps its own
+      // clicks and text context menu.
+      if selection.editingCell != address {
+        RightClickMenu {
+          selection.select(cell: address)
+          focusedCell = nil
+          let content =
+            document.cellBinding(for: row, header: header).wrappedValue
+          var actions = [
+            MenuAction(title: "Copy Cell") {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(content, forType: .string)
+            },
+            MenuAction(title: "Clear Cell") {
+              document.cellBinding(for: row, header: header).wrappedValue = ""
+            },
+          ]
+          if let url = cellURL(content) {
+            actions.append(
+              MenuAction(title: "Open URL") {
+                NSWorkspace.shared.open(url)
+              })
+          }
+          return actions
+        }
+      }
+    }
+  }
+
+  /// Background fill for a data cell: highlighted inside the selection
+  /// rectangle, lighter for a column selection, otherwise transparent.
+  private func cellBackground(
+    index: Int, header: CSVHeader, selectionRect: SelectionRect?
+  ) -> Color {
+    if selectionRect.map({
+      $0.rows.contains(index) && $0.columns.contains(header.columnIndex)
+    }) == true {
+      return Color.accentColor.opacity(0.25)
+    }
+    if selection.columns.contains(header.id) {
+      return Color.accentColor.opacity(0.15)
+    }
+    return Color.clear
+  }
+
+  /// Resolve a click on a data cell into a shift+click range extension, a
+  /// double-click that opens the editor, or a single-click selection.
+  private func handleCellTap(_ address: CellAddress) {
+    let event = NSApp.currentEvent
+    // Shift+click extends the selection from the anchor cell into a
+    // rectangular range.
+    if event?.modifierFlags.contains(.shift) == true,
+      selection.cell != nil,
+      selection.editingCell != address
+    {
+      selection.extend(to: address)
+      focusedCell = nil
+      return
+    }
+    // Clicks inside the cell's own active editor (cursor placement, word
+    // selection) are the editor's business.
+    guard selection.editingCell != address else { return }
+    // Detect double clicks via the AppKit event instead of
+    // TapGesture(count: 2): the recognizer's click counter resets when the
+    // first click ends another cell's edit session and the view tree
+    // rebuilds.
+    if (event?.clickCount ?? 0) >= 2 {
+      selection.beginEditing(address)
+      let clickLocation = event?.locationInWindow
+      DispatchQueue.main.async {
+        focusedCell = address
+        DispatchQueue.main.async { placeCursor(at: clickLocation) }
+      }
+    } else {
+      // Single click on another cell ends any active edit session. Done
+      // here explicitly because the field editor keeps first responder when
+      // a gesture-only view is clicked, so no focus change would fire.
+      selection.select(cell: address)
+      focusedCell = nil
+    }
+  }
+
+  /// The clickable strip below the last row that adds a row; also a drop
+  /// target that moves a dragged row to the end.
+  @ViewBuilder
+  private func addRowStrip(viewportWidth: CGFloat) -> some View {
+    Button {
+      document.addRow()
+    } label: {
+      // The strip spans at least the window so it stays clickable
+      // under the window-centered "+". A hidden "+" fixes the
+      // strip's height; the visible one is overlaid and kept at the
+      // window's horizontal center.
+      let stripWidth = max(tableWidth, viewportWidth)
+      Image(systemName: "plus")
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .hidden()
+        .frame(width: stripWidth)
+        .background(hoveringAddRow ? Color.accentColor.opacity(0.25) : chromeBackground)
+        .overlay {
+          // The glyph rides with the strip vertically (it lives in
+          // the scrolling content), but `visualEffect` counters the
+          // horizontal scroll so it stays centered on the window.
+          // The effect is render-synced, so it never lags or sticks.
+          Image(systemName: "plus")
+            .visualEffect { content, proxy in
+              content.offset(
+                x: viewportWidth / 2
+                  - proxy.frame(in: .named("viewport")).midX)
+            }
+        }
+        // A bare Divider on an Image base renders vertical; the
+        // VStack forces the horizontal orientation.
+        .overlay(alignment: .bottom) { VStack(spacing: 0) { Divider() } }
+        .overlay(alignment: .trailing) { Divider() }
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .focusEffectDisabled()
+    .foregroundStyle(.secondary)
+    .onHover { hoveringAddRow = $0 }
+    .help("Add row")
+    // The strip below the last row accepts row drags, so the gap
+    // after the last row has a drop area below its line too.
+    .onDrop(
+      of: [.text],
+      delegate: RowEndDropDelegate(
+        document: document,
+        draggedRow: $draggedRow, indicator: $rowDropIndicator))
+  }
+
+  // MARK: - Header row
+
+  /// The pinned header row: the "#" corner cell, one cell per column, and
+  /// the add-column button.
+  @ViewBuilder
+  private func tableHeader(columnGap: Int?) -> some View {
+    HStack(spacing: 0) {
+      Text("#")
+        .fontWeight(.semibold)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(width: document.rowNumberColumnWidth, alignment: .trailing)
+        .background(chromeBackground)
+        .overlay(alignment: .trailing) { Divider() }
+      ForEach(document.headers) { header in
+        headerCell(header: header, columnGap: columnGap)
+      }
+      addColumnButton
+    }
+    .background(chromeBackground)
+    .overlay(alignment: .top) { Divider() }
+    .overlay(alignment: .bottom) { Divider() }
+  }
+
+  /// A single header cell: shows the name, or a field editor while
+  /// renaming. Handles column selection, double-click to rename, the
+  /// resize handle, the column context menu, and the reorder drop target.
+  @ViewBuilder
+  private func headerCell(header: CSVHeader, columnGap: Int?) -> some View {
+    Group {
+      if editingHeader == header.id {
+        TextField("", text: document.headerBinding(for: header))
+          .textFieldStyle(.plain)
+          .focused($focusedHeader, equals: header.id)
+          .onSubmit { editingHeader = nil }
+          .onExitCommand { editingHeader = nil }
+      } else {
+        Text(header.name)
+      }
+    }
+    .fontWeight(.semibold)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 6)
+    .frame(width: columnWidth(for: header), alignment: .leading)
+    .background(
+      selection.columns.contains(header.id)
+        ? Color.accentColor.opacity(0.15)
+        : Color.clear
+    )
+    .contentShape(Rectangle())
+    // Plain gesture (not simultaneous) so the resize handle's
+    // own double-click keeps priority within its strip.
+    .gesture(
+      TapGesture().onEnded {
+        guard editingHeader != header.id else { return }
+        if let event = NSApp.currentEvent, event.clickCount >= 2 {
+          editingHeader = header.id
+          let clickLocation = event.locationInWindow
+          DispatchQueue.main.async {
+            focusedHeader = header.id
+            DispatchQueue.main.async { placeCursor(at: clickLocation) }
+          }
+        } else {
+          selection.select(column: header.id)
+          focusedCell = nil
+        }
+      }
+    )
+    .onDrag {
+      draggedColumn = header.id
+      draggedRow = nil
+      return NSItemProvider(object: header.id.uuidString as NSString)
+    }
+    .overlay {
+      // No catcher while renaming, so the field editor keeps
+      // its own clicks and text context menu.
+      if editingHeader != header.id {
+        RightClickMenu {
+          selection.select(column: header.id)
+          focusedCell = nil
+          editingHeader = nil
+          focusedHeader = nil
+          return [
+            MenuAction(title: "Copy Column") {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(
+                document.exportContent(for: header), forType: .string)
+            },
+            MenuAction(title: "Clear Column") {
+              document.clear(column: header)
+            },
+            MenuAction(title: "Delete Column") {
+              document.delete(column: header)
+              selection.columns = []
+            },
+          ]
+        }
+      }
+    }
+    .overlay(alignment: .trailing) {
+      ResizeHandle()
+        .onTapGesture(count: 2) {
+          columnWidths[header.id] = document.fitWidth(for: header)
+        }
+        .gesture(
+          DragGesture(coordinateSpace: .global)
+            .onChanged { value in
+              if dragStartWidths[header.id] == nil {
+                dragStartWidths[header.id] = columnWidth(for: header)
+              }
+              columnWidths[header.id] = max(
+                50, (dragStartWidths[header.id] ?? 50) + value.translation.width)
+            }
+            .onEnded { _ in dragStartWidths[header.id] = nil }
+        )
+    }
+    .overlay { columnInsertionLine(at: header.columnIndex, gap: columnGap) }
+    .onDrop(
+      of: [.text],
+      delegate: ColumnReorderDropDelegate(
+        headerID: header.id, columnWidth: columnWidth(for: header),
+        document: document,
+        draggedColumn: $draggedColumn, indicator: $columnDropIndicator))
+  }
+
+  /// The clickable button right of the last header that adds a column;
+  /// also a drop target that moves a dragged column to the end.
+  @ViewBuilder
+  private var addColumnButton: some View {
+    Button {
+      document.addColumn()
+    } label: {
+      Image(systemName: "plus")
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxHeight: .infinity)
+        .background(hoveringAddColumn ? Color.accentColor.opacity(0.25) : chromeBackground)
+        .overlay(alignment: .trailing) { Divider() }
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .focusEffectDisabled()
+    .foregroundStyle(.secondary)
+    .onHover { hoveringAddColumn = $0 }
+    .help("Add column")
+    // The strip right of the last header accepts column drags,
+    // so the gap after the last column has a drop area right of
+    // its line too.
+    .onDrop(
+      of: [.text],
+      delegate: ColumnEndDropDelegate(
+        document: document,
+        draggedColumn: $draggedColumn, indicator: $columnDropIndicator))
+  }
+
+  // MARK: - Keyboard
+
+  /// Installs the local key monitor that drives keyboard navigation and
+  /// editing. The grid handles keys itself rather than relying on focus so
+  /// a merely-selected cell (no field editor) still responds:
+  ///
+  /// - While editing a cell: Shift+Return inserts a line break (a plain
+  ///   Return submits via `onSubmit` and moves down), Tab moves the edit
+  ///   session right, Shift+Tab left.
+  /// - While a cell is selected: Return starts editing it, the arrow keys
+  ///   move the selection, and Cmd+C/X/V and Cmd+Z/Shift+Cmd+Z act on it.
+  private func installKeyMonitor() {
+    let returnKey: UInt16 = 36
+    let tabKey: UInt16 = 48
+    let leftArrow: UInt16 = 123
+    let rightArrow: UInt16 = 124
+    let downArrow: UInt16 = 125
+    let upArrow: UInt16 = 126
+    keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+      if selection.editingCell != nil {
+        if event.keyCode == returnKey,
+          event.modifierFlags.contains(.shift),
+          let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+        {
+          editor.insertNewlineIgnoringFieldEditor(nil)
+          return nil
+        }
+        if event.keyCode == tabKey {
+          moveEditing(
+            rowDelta: 0,
+            columnDelta: event.modifierFlags.contains(.shift) ? -1 : 1
+          )
+          return nil
+        }
+        return event
+      }
+      // Cmd+C/X/V act on the selected cell, rows, or columns; Cmd+Z and
+      // Shift+Cmd+Z undo and redo. While editing, the field editor
+      // handles them (returned above).
+      if editingHeader == nil,
+        event.modifierFlags.contains(.command),
+        !event.modifierFlags.contains(.option),
+        !event.modifierFlags.contains(.control),
+        let key = event.charactersIgnoringModifiers
+      {
+        switch key {
+        case "c": if copySelection() { return nil }
+        case "x": if cutSelection() { return nil }
+        case "v": if pasteSelection() { return nil }
+        case "z", "Z":
+          if event.modifierFlags.contains(.shift) {
+            document.undoManager?.redo()
+          } else {
+            document.undoManager?.undo()
+          }
+          return nil
+        default: break
+        }
+      }
+      if let cell = selection.cell, editingHeader == nil {
+        switch event.keyCode {
+        case returnKey:
+          selection.beginEditing(cell)
+          DispatchQueue.main.async { focusedCell = cell }
+        case leftArrow: moveSelection(rowDelta: 0, columnDelta: -1)
+        case rightArrow: moveSelection(rowDelta: 0, columnDelta: 1)
+        case downArrow: moveSelection(rowDelta: 1, columnDelta: 0)
+        case upArrow: moveSelection(rowDelta: -1, columnDelta: 0)
+        default: return event
+        }
+        return nil
+      }
+      return event
     }
   }
 }

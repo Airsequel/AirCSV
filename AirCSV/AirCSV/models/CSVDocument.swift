@@ -17,16 +17,15 @@ class CSVDocument: ObservableObject {
   /// into a single undo step.
   private var lastCoalescingKey: String?
 
-  init() {
-
-  }
+  init() {}
 
   required init(configuration: ReadConfiguration) throws {
     guard let data = configuration.file.regularFileContents else {
       throw CocoaError(.fileReadCorruptFile)
     }
-
-    guard let fileContent = String(data: data, encoding: .utf8) else { return }
+    guard let fileContent = String(data: data, encoding: .utf8) else {
+      throw CocoaError(.fileReadInapplicableStringEncoding)
+    }
     self.content = fileContent
     parseCSV(content: fileContent)
   }
@@ -35,12 +34,14 @@ class CSVDocument: ObservableObject {
     switch result {
     case .success(let url):
       readFile(url)
-    case .failure(let error): print("error loading file \(error)")
+    case .failure(let error):
+      print("Failed to import file: \(error)")
     }
   }
 
   func readFile(_ url: URL) {
     guard url.startAccessingSecurityScopedResource() else { return }
+    defer { url.stopAccessingSecurityScopedResource() }
     self.url = url
 
     do {
@@ -48,24 +49,21 @@ class CSVDocument: ObservableObject {
       self.content = content
       parseCSV(content: content)
     } catch {
-      print(error)
+      print("Failed to read \(url.lastPathComponent): \(error)")
     }
-
-    url.stopAccessingSecurityScopedResource()
   }
 
   func parseCSV(content: String) {
     do {
       let data = try EnumeratedCSV(string: content, loadColumns: false)
-
       self.headers = CSVHeader.createHeaders(data: data.header)
-      self.rows = data.rows.map({ CSVRow(cells: $0.map({ CSVCell(content: $0) })) })
+      self.rows = data.rows.map { CSVRow(cells: $0.map { CSVCell(content: $0) }) }
 
       // A freshly loaded file starts with a clean editing history.
       undoManager?.removeAllActions(withTarget: self)
       lastCoalescingKey = nil
     } catch {
-      print(error)
+      print("Failed to parse CSV: \(error)")
     }
   }
 
@@ -122,18 +120,8 @@ class CSVDocument: ObservableObject {
     return max(40, CGFloat(digits) * 8.5 + 16)
   }
 
-  func idealWidth(for header: CSVHeader) -> CGFloat {
-    let headerLength = header.name.count
-    let maxCellLength =
-      rows.compactMap { row in
-        row.cells.count > header.columnIndex ? row.cells[header.columnIndex].content.count : nil
-      }.max() ?? 0
-    let maxLength = max(headerLength, maxCellLength)
-    return min(400, max(50, CGFloat(maxLength) * 8.5 + 24))
-  }
-
-  /// Minimum width that shows all content of the column, without the cap
-  /// applied by `idealWidth(for:)`. Measures the rendered text widths.
+  /// Minimum width that fully shows the column's header and cells,
+  /// measured from the rendered text widths.
   func fitWidth(for header: CSVHeader) -> CGFloat {
     let cellFont = NSFont.monospacedSystemFont(
       ofSize: NSFont.systemFontSize, weight: .regular)
@@ -369,10 +357,10 @@ class CSVDocument: ObservableObject {
   //MARK: - Preview
 
   static var preview: CSVDocument {
-    let vm = CSVDocument()
-    vm.content = sampleCSV
-    vm.parseCSV(content: sampleCSV)
-    return vm
+    let doc = CSVDocument()
+    doc.content = sampleCSV
+    doc.parseCSV(content: sampleCSV)
+    return doc
   }
 
   static var sampleCSV: String {

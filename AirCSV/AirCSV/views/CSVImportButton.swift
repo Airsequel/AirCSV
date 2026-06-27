@@ -19,7 +19,6 @@ struct CSVImportButton: View {
     ) { result in
       document.handleFileImport(for: result)
     }
-
   }
 }
 

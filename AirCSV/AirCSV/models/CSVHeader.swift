@@ -6,15 +6,9 @@ struct CSVHeader: Identifiable, Equatable {
   var columnIndex: Int = 0
 
   static func createHeaders(data: [String]) -> [CSVHeader] {
-    var headers = data.map({ CSVHeader(name: $0) })
-
-    var index = 0
-    for (i, _) in headers.enumerated() {
-      headers[i].columnIndex = index
-      index += 1
+    data.enumerated().map { index, name in
+      CSVHeader(name: name, columnIndex: index)
     }
-
-    return headers
   }
 
 }
