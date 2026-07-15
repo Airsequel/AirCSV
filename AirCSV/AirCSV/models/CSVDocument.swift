@@ -8,6 +8,11 @@ class CSVDocument: ObservableObject {
   @Published var headers: [CSVHeader] = []
   @Published var rows: [CSVRow] = []
 
+  /// Delimiter detected when the file was parsed. Used to serialize the
+  /// document back out so a CSV stays comma-separated and a TSV
+  /// tab-separated.
+  @Published var delimiter: CSVDelimiter = .comma
+
   /// The window's undo manager, injected by the view layer. Weak because
   /// the window owns it.
   weak var undoManager: UndoManager?
@@ -54,17 +59,40 @@ class CSVDocument: ObservableObject {
   }
 
   func parseCSV(content: String) {
-    do {
-      let data = try EnumeratedCSV(string: content, loadColumns: false)
-      self.headers = CSVHeader.createHeaders(data: data.header)
-      self.rows = data.rows.map { CSVRow(cells: $0.map { CSVCell(content: $0) }) }
+    let delimiter = CSVDelimiter.guessed(string: content)
+    self.delimiter = delimiter
 
-      // A freshly loaded file starts with a clean editing history.
-      undoManager?.removeAllActions(withTarget: self)
-      lastCoalescingKey = nil
-    } catch {
-      print("Failed to parse CSV: \(error)")
+    let table: [[String]]
+    if let data = try? EnumeratedCSV(string: content, delimiter: delimiter, loadColumns: false) {
+      table = [data.header] + data.rows
+    } else {
+      // SwiftCSV's parser rejects RFC-noncompliant content such as
+      // unescaped quotes inside an unquoted field (e.g. `Eddie "Lockjaw"
+      // Davis`). Fall back to splitting on the delimiter so messy
+      // real-world files still open instead of showing an empty window.
+      table = Self.lenientParse(content: content, delimiter: delimiter.rawValue)
     }
+
+    guard let header = table.first else { return }
+    self.headers = CSVHeader.createHeaders(data: header)
+    self.rows = table.dropFirst().map { CSVRow(cells: $0.map { CSVCell(content: $0) }) }
+
+    // A freshly loaded file starts with a clean editing history.
+    undoManager?.removeAllActions(withTarget: self)
+    lastCoalescingKey = nil
+  }
+
+  /// Splits `content` into rows and fields on the delimiter, treating
+  /// quotes as literal characters. Used as a fallback when strict CSV
+  /// parsing fails, so malformed files still load.
+  private static func lenientParse(content: String, delimiter: Character) -> [[String]] {
+    let normalized =
+      content
+      .replacingOccurrences(of: "\r\n", with: "\n")
+      .replacingOccurrences(of: "\r", with: "\n")
+    var lines = normalized.components(separatedBy: "\n")
+    if lines.last == "" { lines.removeLast() }
+    return lines.map { $0.components(separatedBy: String(delimiter)) }
   }
 
   //MARK: - Undo
@@ -291,9 +319,9 @@ class CSVDocument: ObservableObject {
     return rows.map { row in
       selectedHeaders.map { header in
         row.cells.indices.contains(header.columnIndex)
-          ? row.cells[header.columnIndex].exportContent
+          ? row.cells[header.columnIndex].exportContent(delimiter: delimiter.rawValue)
           : ""
-      }.joined(separator: ",")
+      }.joined(separator: String(delimiter.rawValue))
     }.joined(separator: "\n")
   }
 
@@ -303,9 +331,9 @@ class CSVDocument: ObservableObject {
     rowRange.map { rowIndex in
       columnRange.map { columnIndex in
         rows[rowIndex].cells.indices.contains(columnIndex)
-          ? rows[rowIndex].cells[columnIndex].exportContent
+          ? rows[rowIndex].cells[columnIndex].exportContent(delimiter: delimiter.rawValue)
           : ""
-      }.joined(separator: ",")
+      }.joined(separator: String(delimiter.rawValue))
     }.joined(separator: "\n")
   }
 

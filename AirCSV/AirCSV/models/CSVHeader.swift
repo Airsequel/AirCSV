@@ -22,8 +22,10 @@ struct CSVCell: Identifiable, Equatable {
   var id: UUID = UUID()
   var content: String
 
-  var exportContent: String {
-    if content.contains(where: { $0 == "," || $0 == "\"" || $0.isNewline }) {
+  /// Serializes the value, quoting it when it contains the delimiter, a
+  /// quote, or a newline.
+  func exportContent(delimiter: Character = ",") -> String {
+    if content.contains(where: { $0 == delimiter || $0 == "\"" || $0.isNewline }) {
       return "\"\(content.replacingOccurrences(of: "\"", with: "\"\""))\""
     } else {
       return content

@@ -15,7 +15,7 @@ struct CSVImportButton: View {
     }
     .fileImporter(
       isPresented: $isPresented,
-      allowedContentTypes: [UTType.commaSeparatedText]
+      allowedContentTypes: [.commaSeparatedText, .tabSeparatedText]
     ) { result in
       document.handleFileImport(for: result)
     }

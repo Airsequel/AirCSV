@@ -14,22 +14,32 @@ final class AirCSVTests: XCTestCase {
 
     func testCSVCellExportContentPlain() {
         let cell = CSVCell(content: "hello")
-        XCTAssertEqual(cell.exportContent, "hello")
+        XCTAssertEqual(cell.exportContent(), "hello")
     }
 
     func testCSVCellExportContentWithComma() {
         let cell = CSVCell(content: "hello, world")
-        XCTAssertEqual(cell.exportContent, "\"hello, world\"")
+        XCTAssertEqual(cell.exportContent(), "\"hello, world\"")
     }
 
     func testCSVCellExportContentWithNewline() {
         let cell = CSVCell(content: "hello\nworld")
-        XCTAssertEqual(cell.exportContent, "\"hello\nworld\"")
+        XCTAssertEqual(cell.exportContent(), "\"hello\nworld\"")
     }
 
     func testCSVCellExportContentWithQuote() {
         let cell = CSVCell(content: "say \"hi\"")
-        XCTAssertEqual(cell.exportContent, "\"say \"\"hi\"\"\"")
+        XCTAssertEqual(cell.exportContent(), "\"say \"\"hi\"\"\"")
+    }
+
+    func testCSVCellExportContentTabDelimiterQuotesTab() {
+        let cell = CSVCell(content: "hello\tworld")
+        XCTAssertEqual(cell.exportContent(delimiter: "\t"), "\"hello\tworld\"")
+    }
+
+    func testCSVCellExportContentTabDelimiterLeavesCommaUnquoted() {
+        let cell = CSVCell(content: "hello, world")
+        XCTAssertEqual(cell.exportContent(delimiter: "\t"), "hello, world")
     }
 
     @MainActor
@@ -40,6 +50,46 @@ final class AirCSVTests: XCTestCase {
         XCTAssertEqual(doc.headers[0].name, "Name")
         XCTAssertEqual(doc.rows.count, 2)
         XCTAssertEqual(doc.rows[0].cells[0].content, "Alice")
+    }
+
+    @MainActor
+    func testParseTSVDetectsTabDelimiter() {
+        let doc = CSVDocument()
+        doc.parseCSV(content: "Name\tAge\nAlice\t30\nBob\t25")
+        XCTAssertEqual(doc.delimiter, .tab)
+        XCTAssertEqual(doc.headers.map(\.name), ["Name", "Age"])
+        XCTAssertEqual(doc.rows.count, 2)
+        XCTAssertEqual(doc.rows[0].cells.map(\.content), ["Alice", "30"])
+    }
+
+    @MainActor
+    func testExportTSVUsesTabDelimiter() {
+        let doc = CSVDocument()
+        doc.parseCSV(content: "Name\tAge\nAlice\t30")
+        XCTAssertEqual(doc.exportContent(), "Name\tAge\nAlice\t30\n")
+    }
+
+    @MainActor
+    func testParseTSVWithUnescapedQuotesFallsBack() {
+        // Real-world messy data: an unescaped quote inside an unquoted
+        // field. Strict CSV parsing throws; the lenient fallback must
+        // still populate the table instead of leaving it empty.
+        let doc = CSVDocument()
+        doc.parseCSV(content: "kind\tartist\tpath\nampersand\tEddie \"Lockjaw\" Davis & His Beboppers\t/music/a.mp3")
+        XCTAssertEqual(doc.delimiter, .tab)
+        XCTAssertEqual(doc.headers.map(\.name), ["kind", "artist", "path"])
+        XCTAssertEqual(doc.rows.count, 1)
+        XCTAssertEqual(
+            doc.rows[0].cells.map(\.content),
+            ["ampersand", "Eddie \"Lockjaw\" Davis & His Beboppers", "/music/a.mp3"])
+    }
+
+    @MainActor
+    func testParseCSVWithUnescapedQuotesFallsBack() {
+        let doc = CSVDocument()
+        doc.parseCSV(content: "a,b\nEddie \"Lockjaw\" Davis,2")
+        XCTAssertEqual(doc.rows.count, 1)
+        XCTAssertEqual(doc.rows[0].cells.map(\.content), ["Eddie \"Lockjaw\" Davis", "2"])
     }
 
     @MainActor
