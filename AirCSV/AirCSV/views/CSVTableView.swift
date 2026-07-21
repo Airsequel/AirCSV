@@ -409,9 +409,13 @@ struct CSVTableView: View {
   /// hosts the row context menu.
   @ViewBuilder
   private func rowNumberCell(index: Int, row: CSVRow) -> some View {
-    Text("\(index + 1)")
+    // String(_:) keeps the number verbatim — interpolating an Int into
+    // Text would localize it with grouping separators ("1 142"), which
+    // no longer fits the digit-count-sized column and wraps.
+    Text(String(index + 1))
       .foregroundStyle(.secondary)
       .font(.system(.body, design: .monospaced))
+      .lineLimit(1)
       .padding(.horizontal, 8)
       .padding(.vertical, 6)
       .frame(width: document.rowNumberColumnWidth, alignment: .trailing)

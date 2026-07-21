@@ -212,9 +212,25 @@ class CSVDocument: ObservableObject {
 
   //MARK: - Layout
 
+  /// Width of the row-number column: fits the largest row number,
+  /// measured with the same monospaced font the cells render in.
   var rowNumberColumnWidth: CGFloat {
-    let digits = String(max(rows.count, 1)).count
-    return max(40, CGFloat(digits) * 8.5 + 16)
+    Self.rowNumberWidth(digits: String(max(rows.count, 1)).count)
+  }
+
+  /// Measured widths per digit count, cached because the width is read
+  /// for every visible row on each render.
+  private static var rowNumberWidthCache: [Int: CGFloat] = [:]
+
+  private static func rowNumberWidth(digits: Int) -> CGFloat {
+    if let width = rowNumberWidthCache[digits] { return width }
+    let font = NSFont.monospacedSystemFont(
+      ofSize: NSFont.systemFontSize, weight: .regular)
+    let sample = String(repeating: "8", count: digits)
+    let width = max(
+      40, ceil((sample as NSString).size(withAttributes: [.font: font]).width) + 16)
+    rowNumberWidthCache[digits] = width
+    return width
   }
 
   /// Fit widths measured during the last parse, so first render doesn't
