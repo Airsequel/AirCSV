@@ -84,7 +84,7 @@ struct CSVTableView: View {
   private let chromeBackground = Color(nsColor: .windowBackgroundColor)
 
   func columnWidth(for header: CSVHeader) -> CGFloat {
-    columnWidths[header.id] ?? document.fitWidth(for: header)
+    columnWidths[header.id] ?? document.cachedFitWidth(for: header)
   }
 
   /// Width of a data row: row number column plus all data columns.
@@ -322,7 +322,7 @@ struct CSVTableView: View {
     // so all its columns are sized.
     .onChange(of: document.headers) {
       for header in document.headers where columnWidths[header.id] == nil {
-        columnWidths[header.id] = document.fitWidth(for: header)
+        columnWidths[header.id] = document.cachedFitWidth(for: header)
       }
     }
     // A new edit session is a new undo step, even for the same cell.

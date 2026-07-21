@@ -8,6 +8,15 @@ class CSVDocument: ObservableObject {
   @Published var headers: [CSVHeader] = []
   @Published var rows: [CSVRow] = []
 
+  /// True while the file's content is still being parsed on a background
+  /// thread. The view shows a loading spinner in the meantime so the
+  /// window can appear immediately instead of waiting for a large file.
+  @Published var isLoading = false
+
+  /// Content decoded at open time but not yet parsed. Cleared once
+  /// `loadPendingContent()` has kicked off the background parse.
+  private var pendingContent: String?
+
   /// Delimiter detected when the file was parsed. Used to serialize the
   /// document back out so a CSV stays comma-separated and a TSV
   /// tab-separated.
@@ -31,8 +40,29 @@ class CSVDocument: ObservableObject {
     guard let fileContent = String(data: data, encoding: .utf8) else {
       throw CocoaError(.fileReadInapplicableStringEncoding)
     }
+    // Defer parsing so the window appears immediately. The view calls
+    // `loadPendingContent()` once it's on screen, which parses in the
+    // background and clears `isLoading`.
     self.content = fileContent
-    parseCSV(content: fileContent)
+    self.pendingContent = fileContent
+    self.isLoading = true
+  }
+
+  /// Parses the content stored at open time on a background thread, then
+  /// publishes the table on the main thread and clears `isLoading`. Does
+  /// nothing if there's no pending content (e.g. a new empty document or
+  /// after the file has already loaded).
+  func loadPendingContent() {
+    guard let content = pendingContent else { return }
+    pendingContent = nil
+    Task.detached(priority: .userInitiated) { [weak self] in
+      let parsed = Self.parseTable(content: content)
+      await MainActor.run {
+        guard let self else { return }
+        self.apply(parsed)
+        self.isLoading = false
+      }
+    }
   }
 
   func handleFileImport(for result: Result<URL, Error>) {
@@ -58,9 +88,29 @@ class CSVDocument: ObservableObject {
     }
   }
 
+  /// The parsed table together with the delimiter it was parsed with
+  /// and the column fit widths measured alongside the parse.
+  struct ParsedTable {
+    let delimiter: CSVDelimiter
+    let headers: [CSVHeader]
+    let rows: [CSVRow]
+    /// Minimum width per column (keyed by header id) that fully shows
+    /// header and cells. Measured off the main thread because doing it
+    /// for every cell at first render blocks the UI for seconds on
+    /// larger files.
+    let fitWidths: [UUID: CGFloat]
+    var hasContent: Bool { !headers.isEmpty }
+  }
+
   func parseCSV(content: String) {
+    apply(Self.parseTable(content: content))
+  }
+
+  /// Parses CSV text into headers and rows. Pure and self-contained so it
+  /// can run off the main thread; the caller applies the result via
+  /// `apply(_:)`.
+  static func parseTable(content: String) -> ParsedTable {
     let delimiter = CSVDelimiter.guessed(string: content)
-    self.delimiter = delimiter
 
     let table: [[String]]
     if let data = try? EnumeratedCSV(string: content, delimiter: delimiter, loadColumns: false) {
@@ -70,12 +120,31 @@ class CSVDocument: ObservableObject {
       // unescaped quotes inside an unquoted field (e.g. `Eddie "Lockjaw"
       // Davis`). Fall back to splitting on the delimiter so messy
       // real-world files still open instead of showing an empty window.
-      table = Self.lenientParse(content: content, delimiter: delimiter.rawValue)
+      table = lenientParse(content: content, delimiter: delimiter.rawValue)
     }
 
-    guard let header = table.first else { return }
-    self.headers = CSVHeader.createHeaders(data: header)
-    self.rows = table.dropFirst().map { CSVRow(cells: $0.map { CSVCell(content: $0) }) }
+    guard let header = table.first else {
+      return ParsedTable(delimiter: delimiter, headers: [], rows: [], fitWidths: [:])
+    }
+    let headers = CSVHeader.createHeaders(data: header)
+    let rows = table.dropFirst().map { CSVRow(cells: $0.map { CSVCell(content: $0) }) }
+    return ParsedTable(
+      delimiter: delimiter,
+      headers: headers,
+      rows: rows,
+      fitWidths: Dictionary(
+        uniqueKeysWithValues: headers.map { ($0.id, measuredFitWidth(for: $0, rows: rows)) })
+    )
+  }
+
+  /// Publishes a parsed table onto the document and resets the editing
+  /// history. An empty result (no header row) leaves the table untouched.
+  private func apply(_ parsed: ParsedTable) {
+    self.delimiter = parsed.delimiter
+    guard parsed.hasContent else { return }
+    self.fitWidthCache = parsed.fitWidths
+    self.headers = parsed.headers
+    self.rows = parsed.rows
 
     // A freshly loaded file starts with a clean editing history.
     undoManager?.removeAllActions(withTarget: self)
@@ -148,9 +217,31 @@ class CSVDocument: ObservableObject {
     return max(40, CGFloat(digits) * 8.5 + 16)
   }
 
+  /// Fit widths measured during the last parse, so first render doesn't
+  /// re-measure every cell on the main thread. Not published: purely a
+  /// cache for `cachedFitWidth(for:)`.
+  private var fitWidthCache: [UUID: CGFloat] = [:]
+
   /// Minimum width that fully shows the column's header and cells,
-  /// measured from the rendered text widths.
+  /// measured from the rendered text widths. Prefers the width measured
+  /// during the background parse; measures live (and caches) only for
+  /// columns added since.
+  func cachedFitWidth(for header: CSVHeader) -> CGFloat {
+    if let width = fitWidthCache[header.id] { return width }
+    let width = fitWidth(for: header)
+    fitWidthCache[header.id] = width
+    return width
+  }
+
+  /// Minimum width that fully shows the column's header and cells,
+  /// re-measured from the current content.
   func fitWidth(for header: CSVHeader) -> CGFloat {
+    Self.measuredFitWidth(for: header, rows: rows)
+  }
+
+  /// Static and self-contained so it can run off the main thread during
+  /// the background parse. String measurement is thread-safe.
+  private static func measuredFitWidth(for header: CSVHeader, rows: [CSVRow]) -> CGFloat {
     let cellFont = NSFont.monospacedSystemFont(
       ofSize: NSFont.systemFontSize, weight: .regular)
     let headerFont = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)

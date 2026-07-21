@@ -8,7 +8,18 @@ struct ContentView: View {
 
   var body: some View {
     CSVTableView(document: document, wrapContent: $wrapContent)
-      .onAppear { document.undoManager = undoManager }
+      .overlay {
+        if document.isLoading {
+          ProgressView("Loading…")
+            .controlSize(.large)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background)
+        }
+      }
+      .task { document.loadPendingContent() }
+      .onAppear {
+        document.undoManager = undoManager
+      }
       .onChange(of: undoManager) { document.undoManager = undoManager }
       .toolbar {
         CSVImportButton(document: document)
