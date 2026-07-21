@@ -241,6 +241,15 @@ class CSVDocument: ObservableObject {
 
   /// Static and self-contained so it can run off the main thread during
   /// the background parse. String measurement is thread-safe.
+  ///
+  /// Measuring text is ~70× slower than counting bytes, so instead of
+  /// measuring every cell (tens of seconds on a 500k-row file), scan
+  /// for the few widest candidates by UTF-8 length and measure only
+  /// those. Cells render in a monospaced font, so byte count is a
+  /// faithful width proxy — and it over-weights multi-byte characters
+  /// (CJK, emoji), which render wider, so the candidate set errs
+  /// toward including them. Measuring several candidates absorbs the
+  /// remaining count-vs-width mismatch.
   private static func measuredFitWidth(for header: CSVHeader, rows: [CSVRow]) -> CGFloat {
     let cellFont = NSFont.monospacedSystemFont(
       ofSize: NSFont.systemFontSize, weight: .regular)
@@ -248,11 +257,31 @@ class CSVDocument: ObservableObject {
 
     let headerWidth = (header.name as NSString)
       .size(withAttributes: [.font: headerFont]).width
+
+    // The widest candidates seen so far, sorted ascending by byte
+    // count so the weakest is always at index 0.
+    let candidateCount = 8
+    var candidates: [(bytes: Int, content: String)] = []
+    for row in rows where row.cells.count > header.columnIndex {
+      let content = row.cells[header.columnIndex].content
+      let bytes = content.utf8.count
+      if candidates.count < candidateCount {
+        candidates.append((bytes, content))
+        candidates.sort { $0.bytes < $1.bytes }
+      } else if bytes > candidates[0].bytes {
+        candidates[0] = (bytes, content)
+        var index = 0
+        while index + 1 < candidates.count,
+          candidates[index].bytes > candidates[index + 1].bytes
+        {
+          candidates.swapAt(index, index + 1)
+          index += 1
+        }
+      }
+    }
     let maxCellWidth =
-      rows.compactMap { row -> CGFloat? in
-        guard row.cells.count > header.columnIndex else { return nil }
-        return (row.cells[header.columnIndex].content as NSString)
-          .size(withAttributes: [.font: cellFont]).width
+      Set(candidates.map(\.content)).map {
+        ($0 as NSString).size(withAttributes: [.font: cellFont]).width
       }.max() ?? 0
 
     let horizontalPadding: CGFloat = 16
