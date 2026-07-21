@@ -18,8 +18,10 @@ struct CSVRow: Identifiable, Equatable {
   var cells: [CSVCell]
 }
 
-struct CSVCell: Identifiable, Equatable {
-  var id: UUID = UUID()
+/// Not `Identifiable`: cells are always addressed by row and column,
+/// and a per-cell UUID costs real time and memory on large files
+/// (millions of cells).
+struct CSVCell: Equatable {
   var content: String
 
   /// Serializes the value, quoting it when it contains the delimiter, a
